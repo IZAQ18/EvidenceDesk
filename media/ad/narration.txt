@@ -1,0 +1,17 @@
+Policy answers should not depend on guesswork.
+
+Meet EvidenceDesk: a secure, citation-first assistant for organizational documents.
+
+Upload a handbook, policy, procedure, or scanned PDF. EvidenceDesk extracts the text, uses OCR when needed, and stores useful metadata.
+
+Before search begins, it checks the user’s tenant, role, and clearance. Restricted text is filtered before it can reach the answer workflow.
+
+Then a controlled pipeline retrieves relevant passages, expands nearby context, ranks the evidence, writes a grounded answer, and verifies its citations.
+
+The result is not just a confident paragraph. It is an answer you can inspect, with exact source passages. If the documents do not support an answer, EvidenceDesk refuses instead of pretending.
+
+Conversations, feedback, document versions, audit events, and retrieval insights make the experience practical—not just a chatbot demo.
+
+This is an honest local portfolio MVP, with automated evaluation, Docker, continuous integration, and a clear path to standard AWS services.
+
+EvidenceDesk. Evidence before confidence.

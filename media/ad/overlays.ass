@@ -1,0 +1,36 @@
+[Script Info]
+Title: EvidenceDesk workflow advertisement
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+WrapStyle: 2
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Title,Segoe UI Semibold,74,&H00F8FFF9,&H000000FF,&HBE081510,&H7A06100C,-1,0,0,0,100,100,1,0,1,3,1,5,110,110,0,1
+Style: Accent,Segoe UI Semibold,78,&H00BFF279,&H000000FF,&HBE081510,&H7A06100C,-1,0,0,0,100,100,1,0,1,3,1,5,110,110,0,1
+Style: Caption,Segoe UI,36,&H00FFFFFF,&H000000FF,&HD607100D,&HB808100D,0,0,0,0,100,100,0,0,3,2,0,2,170,170,58,1
+Style: Kicker,Segoe UI Semibold,24,&H00BFF279,&H000000FF,&HBE081510,&H7A06100C,-1,0,0,0,100,100,4,0,1,2,0,8,80,80,75,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 1,0:00:00.30,0:00:04.70,Kicker,,0,0,0,,ORGANIZATIONAL KNOWLEDGE · REIMAGINED
+Dialogue: 1,0:00:00.50,0:00:04.70,Title,,0,0,0,,POLICY ANSWERS SHOULD NOT\NDEPEND ON GUESSWORK
+Dialogue: 1,0:00:04.80,0:00:11.00,Accent,,0,0,0,,MEET EVIDENCEDESK
+Dialogue: 1,0:00:11.00,0:00:20.00,Title,,0,0,0,,INGEST · OCR · METADATA
+Dialogue: 1,0:00:20.00,0:00:29.00,Title,,0,0,0,,AUTHORIZE BEFORE RETRIEVAL
+Dialogue: 1,0:00:29.00,0:00:39.50,Accent,,0,0,0,,RETRIEVE → RANK → VERIFY
+Dialogue: 1,0:00:39.50,0:00:49.00,Title,,0,0,0,,ANSWERS YOU CAN INSPECT
+Dialogue: 1,0:00:49.00,0:00:57.00,Title,,0,0,0,,PRACTICAL BY DESIGN
+Dialogue: 1,0:00:57.00,0:01:06.00,Title,,0,0,0,,LOCAL MVP · CLEAR AWS PATH
+Dialogue: 1,0:01:06.00,0:01:10.40,Accent,,0,0,0,,EVIDENCE BEFORE CONFIDENCE
+Dialogue: 2,0:00:00.00,0:00:04.80,Caption,,0,0,0,,Policy answers should not depend on guesswork.
+Dialogue: 2,0:00:04.80,0:00:11.00,Caption,,0,0,0,,Meet EvidenceDesk: a secure, citation-first assistant for organizational documents.
+Dialogue: 2,0:00:11.00,0:00:20.00,Caption,,0,0,0,,Upload a handbook, policy, procedure, or scanned PDF. EvidenceDesk extracts text,\Nuses OCR when needed, and stores useful metadata.
+Dialogue: 2,0:00:20.00,0:00:29.00,Caption,,0,0,0,,Before search begins, it checks tenant, role, and clearance.\NRestricted text is filtered before the answer workflow.
+Dialogue: 2,0:00:29.00,0:00:39.50,Caption,,0,0,0,,A controlled pipeline retrieves passages, expands context, ranks evidence,\Nwrites a grounded answer, and verifies citations.
+Dialogue: 2,0:00:39.50,0:00:49.00,Caption,,0,0,0,,The result is an answer you can inspect, with exact source passages.\NIf evidence is missing, EvidenceDesk refuses instead of pretending.
+Dialogue: 2,0:00:49.00,0:00:57.00,Caption,,0,0,0,,Conversations, feedback, versions, audit events, and retrieval insights\Nmake it practical—not just a chatbot demo.
+Dialogue: 2,0:00:57.00,0:01:06.00,Caption,,0,0,0,,An honest local portfolio MVP, with evaluation, Docker, CI,\Nand a clear path to standard AWS services.
+Dialogue: 2,0:01:06.00,0:01:10.40,Caption,,0,0,0,,EvidenceDesk. Evidence before confidence.

@@ -1,0 +1,16 @@
+services:
+  evidencedesk:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      EVIDENCEDESK_ENV: production
+      EVIDENCEDESK_DB_PATH: /app/data/evidencedesk.db
+    volumes:
+      - evidencedesk-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  evidencedesk-data:
