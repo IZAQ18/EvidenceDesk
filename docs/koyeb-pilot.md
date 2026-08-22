@@ -1,6 +1,8 @@
-# Protected Koyeb pilot
+# Koyeb alternative
 
-Koyeb is the recommended no-cost test host for EvidenceDesk because it can build the existing Dockerfile from a private GitHub repository. The Docker image already includes Tesseract OCR. This is a portfolio pilot, not the final AWS production design.
+Koyeb can build the existing Dockerfile from a private GitHub repository, but it is no longer the recommended no-cost route for a new account. Koyeb's February 2026 announcement says new users need a valid payment method and a paid plan. Existing organizations may retain their existing plan. Use the [Render pilot guide](render-pilot.md) when the goal is testing without payment.
+
+The instructions below remain available for an existing Koyeb organization. The Docker image already includes Tesseract OCR. This is a portfolio pilot, not the final AWS production design.
 
 ## Create the service
 

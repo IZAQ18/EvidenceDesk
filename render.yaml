@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: evidencedesk-pilot
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: EVIDENCEDESK_ENV
+        value: production
+      - key: EVIDENCEDESK_AUTH_MODE
+        value: api_key
+      - key: EVIDENCEDESK_PILOT_ACCESS_CODE
+        sync: false
+      - key: EVIDENCEDESK_PILOT_SESSION_HOURS
+        value: "12"
+      - key: EVIDENCEDESK_SEED_DEMO_CONTENT
+        value: "true"
+      - key: EVIDENCEDESK_DB_PATH
+        value: /tmp/evidencedesk/evidencedesk.db
+      - key: EVIDENCEDESK_DOCUMENT_STORE_PATH
+        value: /tmp/evidencedesk/originals
+      - key: EVIDENCEDESK_RATE_LIMIT_PER_MINUTE
+        value: "30"
+      - key: EVIDENCEDESK_MAX_UPLOAD_BYTES
+        value: "5000000"
+      - key: EVIDENCEDESK_MAX_PDF_PAGES
+        value: "40"
+      - key: EVIDENCEDESK_OCR_MAX_PAGES
+        value: "10"
+      - key: EVIDENCEDESK_EXPOSE_API_DOCS
+        value: "false"
+      - key: EVIDENCEDESK_ALLOWED_HOSTS
+        value: localhost,127.0.0.1,*.onrender.com

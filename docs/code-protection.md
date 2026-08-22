@@ -1,6 +1,6 @@
 # Protecting the private pilot
 
-Keeping the GitHub repository private prevents anonymous source access. Grant the hosting provider access to this repository only, invite no unnecessary collaborators, require multi-factor authentication on GitHub and Koyeb, and review installed GitHub Apps periodically.
+Keeping the GitHub repository private prevents anonymous source access. Grant the hosting provider access to this repository only, invite no unnecessary collaborators, require multi-factor authentication on GitHub and Render, and review installed GitHub Apps periodically.
 
 Secrets belong in hosting environment variables. `.env`, local databases, uploaded files, generated outputs, and work folders are excluded by `.gitignore`. The pilot access code is compared without ordinary string equality, exchanged for an HttpOnly and SameSite session cookie, and can be invalidated immediately by rotating the code and redeploying.
 

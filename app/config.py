@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     seed_demo_content: bool = False
     expose_api_docs: bool = False
     public_base_url: str | None = None
-    allowed_hosts: str = "localhost,127.0.0.1,testserver,*.koyeb.app"
+    allowed_hosts: str = "localhost,127.0.0.1,testserver,*.onrender.com,*.koyeb.app"
 
     @field_validator("api_keys", mode="before")
     @classmethod

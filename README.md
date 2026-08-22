@@ -87,9 +87,9 @@ Docker starts in production mode and fails closed unless authentication is confi
 
 ### Protected free pilot
 
-The recommended portfolio pilot uses Koyeb's free Docker instance with a private GitHub repository. A separate access-code page creates an HttpOnly session, production API documentation is hidden, search engines are told not to index the site, and two fictional Northstar Labs documents are restored after an ephemeral restart. This is privacy-in-depth, not a claim that browser-delivered interface code is invisible.
+The recommended portfolio pilot uses Render's free Docker web service with a private GitHub repository. A separate access-code page creates an HttpOnly session, production API documentation is hidden, search engines are told not to index the site, and two fictional Northstar Labs documents are restored after an ephemeral restart. This is privacy-in-depth, not a claim that browser-delivered interface code is invisible.
 
-See the [Koyeb pilot guide](docs/koyeb-pilot.md) and [code-protection notes](docs/code-protection.md). The free instance can sleep and its local storage can reset, so use it only for synthetic reviewer demonstrations—not sensitive documents or an official production launch.
+See the [Render pilot guide](docs/render-pilot.md) and [code-protection notes](docs/code-protection.md). The free instance sleeps after 15 minutes and its local storage can reset, so use it only for synthetic reviewer demonstrations—not sensitive documents or an official production launch. The [Koyeb guide](docs/koyeb-pilot.md) is retained as a paid-plan alternative.
 
 ## A simple demo
 
