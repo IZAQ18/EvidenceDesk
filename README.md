@@ -1,5 +1,7 @@
 # EvidenceDesk
 
+![EvidenceDesk — answers you can inspect](docs/assets/evidencedesk-social-card.png)
+
 EvidenceDesk is a secure, citation-first knowledge assistant for organizational documents. It ingests TXT, Markdown, searchable PDFs, and scanned PDFs; keeps the original file and useful metadata; retrieves only evidence the caller may access; and returns page-level citations that open beside the answer. When the available evidence is weak, it says so instead of inventing a policy.
 
 This is an intentionally honest portfolio MVP. It runs locally and demonstrates production-minded design, but it is **not** represented as GovCloud-ready, compliance-certified, or proven at large scale.
@@ -15,9 +17,9 @@ This is an intentionally honest portfolio MVP. It runs locally and demonstrates 
 - Tenant and classification filtering before retrieval; role checks for administration; ownership checks for conversation data.
 - API-key authentication for local use plus an optional standards-based OIDC/JWT validation adapter.
 - Rate limits, upload limits, security headers, safe file storage, prompt-injection flags, and text-free audit events.
-- A dark-first editorial interface with layered evidence surfaces, gold/emerald trust states, a polished light theme, responsive mobile layout, keyboard focus states, and a restrained 4UP design-engineering signature.
+- A dark-first editorial interface with layered evidence surfaces, gold/emerald trust states, a polished light theme, responsive mobile layout, keyboard focus states, and an IZAQ / 4UP design-engineering signature.
 - Prompt starters, auto-growing questions, toast feedback, `/` question focus, and `Ctrl/Cmd + K` library search.
-- A replayable cinematic intro with a 4UP maker reveal, progress counter, skip control, mobile composition, and reduced-motion fallback.
+- A replayable cinematic intro with an IZAQ maker reveal, progress counter, skip control, mobile composition, and reduced-motion fallback.
 - Aurora, Cobalt, and Ember accent palettes, interactive pointer light, spectrum navigation, and more expressive verified-evidence states.
 - Docker, GitHub Actions CI, evaluation/security tests, and a concrete path to standard AWS.
 
@@ -83,6 +85,12 @@ docker compose up --build
 
 Docker starts in production mode and fails closed unless authentication is configured. Originals and SQLite data live in the mounted data volume.
 
+### Protected free pilot
+
+The recommended portfolio pilot uses Koyeb's free Docker instance with a private GitHub repository. A separate access-code page creates an HttpOnly session, production API documentation is hidden, search engines are told not to index the site, and two fictional Northstar Labs documents are restored after an ephemeral restart. This is privacy-in-depth, not a claim that browser-delivered interface code is invisible.
+
+See the [Koyeb pilot guide](docs/koyeb-pilot.md) and [code-protection notes](docs/code-protection.md). The free instance can sleep and its local storage can reset, so use it only for synthetic reviewer demonstrations—not sensitive documents or an official production launch.
+
 ## A simple demo
 
 1. Connect with an admin key.
@@ -98,7 +106,7 @@ If the uploaded code of conduct contains no leave policy, the correct outcome is
 
 ### Cinematic product introduction
 
-![EvidenceDesk cinematic introduction with 4UP maker reveal](docs/assets/intro-vivid.png)
+![EvidenceDesk cinematic introduction with IZAQ maker reveal](docs/assets/intro-vivid.png)
 
 ### Grounded answer with highlighted source evidence
 

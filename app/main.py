@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 import re
 import sqlite3
@@ -11,11 +13,24 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+)
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.config import Classification, Settings, get_settings
 from app.db import Database
-from app.ingestion import chunk_pages, extract_upload, ocr_capability
+from app.ingestion import (
+    ExtractedDocument,
+    ExtractedPage,
+    chunk_pages,
+    extract_upload,
+    ocr_capability,
+)
 from app.models import (
     AnswerRequest,
     AnswerResponse,
@@ -27,6 +42,13 @@ from app.models import (
     MessageOut,
     Principal,
 )
+from app.pilot import (
+    PILOT_COOKIE,
+    access_page,
+    has_pilot_access,
+    pilot_cookie_value,
+    pilot_principal,
+)
 from app.repository import DuplicateDocumentError, Repository
 from app.security import authenticate_key, enforce_rate_limit, require_admin, require_writer
 from app.storage import DocumentStorage
@@ -35,6 +57,7 @@ from app.workflow import AnswerWorkflow
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("evidencedesk")
+DEMO_DOCUMENTS = Path(__file__).parent / "demo_docs"
 
 
 def _clean_optional(value: str | None, limit: int = 200) -> str | None:
@@ -53,6 +76,46 @@ def _date_value(value: str | None, label: str) -> str | None:
         raise HTTPException(status_code=422, detail=f"{label} must use YYYY-MM-DD") from exc
 
 
+def _seed_demo_documents(
+    settings: Settings, repository: Repository, storage: DocumentStorage
+) -> None:
+    """Seed synthetic examples when an ephemeral pilot starts with an empty database."""
+    principal = pilot_principal(settings)
+    if repository.list_documents(principal):
+        return
+    for path in sorted(DEMO_DOCUMENTS.glob("*.md")):
+        content = path.read_bytes()
+        text = content.decode("utf-8")
+        extracted = ExtractedDocument(
+            filename=path.name,
+            content_type="text/markdown",
+            content=content,
+            pages=[ExtractedPage(page_number=1, text=text)],
+            sha256=hashlib.sha256(content).hexdigest(),
+            extraction_method="plain-text",
+        )
+        document_id = str(uuid4())
+        storage_path = storage.save(principal.tenant_id, document_id, ".md", content)
+        repository.add_document(
+            extracted,
+            chunk_pages(extracted.pages),
+            "internal",
+            "Synthetic People Operations demo",
+            principal,
+            document_id=document_id,
+            storage_path=storage_path,
+            collection="Pilot examples",
+            version="1.0",
+        )
+        repository.audit(
+            principal,
+            "demo_document_seeded",
+            "document",
+            document_id,
+            {"filename": path.name},
+        )
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     resolved_settings = settings or get_settings()
     database = Database(resolved_settings.db_path)
@@ -65,6 +128,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         resolved_settings.validate_auth()
         resolved_settings.resolved_api_keys()
         database.initialize()
+        if resolved_settings.seed_demo_content:
+            _seed_demo_documents(resolved_settings, repository, storage)
         capability = ocr_capability(resolved_settings)
         logger.info(
             "service_started environment=%s ocr_available=%s",
@@ -73,11 +138,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         yield
 
+    show_docs = resolved_settings.env != "production" or resolved_settings.expose_api_docs
     app = FastAPI(
         title="EvidenceDesk",
         version="0.5.0",
         description="A secure evidence workspace with citations, OCR, conversations, and feedback.",
         lifespan=lifespan,
+        docs_url="/docs" if show_docs else None,
+        redoc_url="/redoc" if show_docs else None,
+        openapi_url="/openapi.json" if show_docs else None,
+    )
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=resolved_settings.resolved_allowed_hosts(),
     )
     app.state.settings = resolved_settings
     app.state.repository = repository
@@ -90,10 +163,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
         started = time.perf_counter()
-        response = await call_next(request)
+        public_paths = {
+            "/health",
+            "/robots.txt",
+            "/social-card.png",
+            "/pilot-background.png",
+            "/access",
+        }
+        if (
+            resolved_settings.pilot_access_code
+            and request.url.path not in public_paths
+            and not has_pilot_access(request, resolved_settings)
+        ):
+            if request.url.path.startswith("/v1/"):
+                response = JSONResponse({"detail": "Pilot access required"}, status_code=401)
+            else:
+                response = RedirectResponse("/access", status_code=307)
+        else:
+            response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+        response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+        response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         response.headers["Cache-Control"] = "no-store"
         response.headers["Content-Security-Policy"] = (
@@ -101,6 +194,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "script-src 'self' 'unsafe-inline'; connect-src 'self'; "
             "frame-src blob:; frame-ancestors 'none'"
         )
+        if resolved_settings.env == "production":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         logger.info(
             "request method=%s path=%s status=%s duration_ms=%.1f",
             request.method,
@@ -118,6 +213,51 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except sqlite3.Error as exc:
             raise HTTPException(status_code=503, detail="Database unavailable") from exc
         return {"status": "ok", "service": "evidencedesk", "version": "0.5.0"}
+
+    @app.get("/robots.txt", response_class=PlainTextResponse, include_in_schema=False)
+    def robots() -> PlainTextResponse:
+        return PlainTextResponse("User-agent: *\nDisallow: /\n")
+
+    @app.get("/social-card.png", include_in_schema=False)
+    def social_card() -> FileResponse:
+        return FileResponse(
+            Path(__file__).parent / "assets" / "evidencedesk-social-card.png",
+            media_type="image/png",
+        )
+
+    @app.get("/pilot-background.png", include_in_schema=False)
+    def pilot_background() -> FileResponse:
+        return FileResponse(
+            Path(__file__).parent / "assets" / "evidencedesk-social-background.png",
+            media_type="image/png",
+        )
+
+    @app.get(
+        "/access", response_class=HTMLResponse, response_model=None, include_in_schema=False
+    )
+    def pilot_access(request: Request) -> HTMLResponse | RedirectResponse:
+        if not resolved_settings.pilot_access_code or has_pilot_access(request, resolved_settings):
+            return RedirectResponse("/", status_code=307)
+        return HTMLResponse(access_page())
+
+    @app.post(
+        "/access", response_class=HTMLResponse, response_model=None, include_in_schema=False
+    )
+    def unlock_pilot(access_code: str = Form(...)) -> HTMLResponse | RedirectResponse:
+        expected = resolved_settings.pilot_access_code
+        if not expected or not hmac.compare_digest(access_code, expected):
+            return HTMLResponse(access_page("invalid"), status_code=401)
+        response = RedirectResponse("/", status_code=303)
+        response.set_cookie(
+            PILOT_COOKIE,
+            pilot_cookie_value(expected),
+            max_age=resolved_settings.pilot_session_hours * 3600,
+            httponly=True,
+            secure=resolved_settings.env == "production",
+            samesite="lax",
+            path="/",
+        )
+        return response
 
     @app.get("/v1/capabilities", dependencies=[Depends(enforce_rate_limit)])
     def capabilities(_: Principal = Depends(authenticate_key)) -> dict[str, object]:
@@ -464,8 +604,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return repository.admin_metrics(principal)
 
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
-    def index() -> HTMLResponse:
-        return HTMLResponse(UI_HTML)
+    def index(request: Request) -> HTMLResponse:
+        base_url = (resolved_settings.public_base_url or str(request.base_url)).rstrip("/")
+        html = UI_HTML.replace("__SOCIAL_CARD_URL__", f"{base_url}/social-card.png")
+        html = html.replace(
+            "__PILOT_MODE__", "true" if resolved_settings.pilot_access_code else "false"
+        )
+        return HTMLResponse(html)
 
     return app
 

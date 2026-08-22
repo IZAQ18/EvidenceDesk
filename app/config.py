@@ -43,6 +43,13 @@ class Settings(BaseSettings):
     ocr_min_words_per_page: int = Field(default=12, ge=3, le=100)
     tessdata_path: Path | None = None
     api_keys: dict[str, PrincipalConfig] | str | None = None
+    pilot_access_code: str | None = Field(default=None, min_length=12, max_length=200)
+    pilot_session_hours: int = Field(default=12, ge=1, le=168)
+    pilot_tenant_id: str = Field(default="pilot", min_length=1, max_length=100)
+    seed_demo_content: bool = False
+    expose_api_docs: bool = False
+    public_base_url: str | None = None
+    allowed_hosts: str = "localhost,127.0.0.1,testserver,*.koyeb.app"
 
     @field_validator("api_keys", mode="before")
     @classmethod
@@ -54,8 +61,10 @@ class Settings(BaseSettings):
     def resolved_api_keys(self) -> dict[str, PrincipalConfig]:
         if isinstance(self.api_keys, dict) and self.api_keys:
             return self.api_keys
-        if self.env == "production" and self.auth_mode != "oidc":
+        if self.env == "production" and self.auth_mode != "oidc" and not self.pilot_access_code:
             raise RuntimeError("EVIDENCEDESK_API_KEYS must be configured in production")
+        if self.pilot_access_code:
+            return {}
         if self.auth_mode == "oidc":
             return {}
         return {
@@ -86,6 +95,9 @@ class Settings(BaseSettings):
             ]
             if missing:
                 raise RuntimeError(f"OIDC configuration is incomplete: {', '.join(missing)}")
+
+    def resolved_allowed_hosts(self) -> list[str]:
+        return [host.strip() for host in self.allowed_hosts.split(",") if host.strip()]
 
 
 @lru_cache

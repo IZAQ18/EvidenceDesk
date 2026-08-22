@@ -13,6 +13,7 @@ from fastapi import Depends, Header, HTTPException, Request, status
 
 from app.config import Settings, get_settings
 from app.models import Principal
+from app.pilot import has_pilot_access, pilot_principal
 
 logger = logging.getLogger("evidencedesk.security")
 
@@ -74,7 +75,10 @@ def authenticate_key(
     x_api_key: str | None = Header(default=None),
     authorization: str | None = Header(default=None),
     settings: Settings = Depends(get_settings),
+    request: Request = None,
 ) -> Principal:
+    if request and settings.pilot_access_code and has_pilot_access(request, settings):
+        return pilot_principal(settings)
     if authorization and authorization.lower().startswith("bearer "):
         if settings.auth_mode not in {"oidc", "hybrid"}:
             raise HTTPException(
