@@ -50,6 +50,9 @@ def test_protected_pilot_gate_and_seeded_content(tmp_path):
         rejected = client.post("/access", data={"access_code": "incorrect-access-code"})
         assert rejected.status_code == 401
         assert "not accepted" in rejected.text
+        assert "Support IZAQ" in rejected.text
+        assert "1160981131004752" in rejected.text
+        assert "PK83 NAYA 1234 5030 6196 1996" in rejected.text
 
         unlocked = client.post(
             "/access",
@@ -65,6 +68,8 @@ def test_protected_pilot_gate_and_seeded_content(tmp_path):
         assert workspace.status_code == 200
         assert "IZAQ" in workspace.text
         assert "plansView" in workspace.text
+        assert "supportDock" in workspace.text
+        assert "40% pledged to charitable giving" in workspace.text
         assert "/developer-signature.png" in workspace.text
         assert "Ahsan Maqbool Ahmad" in workspace.text
         assert "Muhammad Qasim Ayub" in workspace.text
