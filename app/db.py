@@ -168,6 +168,45 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
     expires_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_expiry ON auth_sessions(expires_at);
+
+CREATE TABLE IF NOT EXISTS ingestion_jobs (
+    id TEXT PRIMARY KEY,
+    document_id TEXT NOT NULL,
+    tenant_id TEXT NOT NULL,
+    owner_subject TEXT NOT NULL,
+    owner_role TEXT NOT NULL,
+    owner_clearances_json TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    classification TEXT NOT NULL CHECK (classification IN ('public','internal','confidential')),
+    source TEXT,
+    collection TEXT,
+    version TEXT,
+    effective_date TEXT,
+    expires_at TEXT,
+    supersedes_document_id TEXT,
+    storage_path TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('queued','processing','ready','failed')),
+    stage TEXT NOT NULL,
+    progress INTEGER NOT NULL DEFAULT 0,
+    detail TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    max_attempts INTEGER NOT NULL DEFAULT 3,
+    worker_id TEXT,
+    lease_expires_at TEXT,
+    error_code TEXT,
+    error_message TEXT,
+    error_action TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    finished_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_ingestion_jobs_queue
+    ON ingestion_jobs(status, lease_expires_at, created_at);
+CREATE INDEX IF NOT EXISTS idx_ingestion_jobs_tenant
+    ON ingestion_jobs(tenant_id, created_at DESC);
 """
 
 POSTGRES_MIGRATIONS: tuple[tuple[int, tuple[str, ...]], ...] = (
@@ -314,6 +353,49 @@ POSTGRES_MIGRATIONS: tuple[tuple[int, tuple[str, ...]], ...] = (
                 expires_at TEXT NOT NULL
             )""",
             "CREATE INDEX IF NOT EXISTS idx_auth_sessions_expiry ON auth_sessions(expires_at)",
+        ),
+    ),
+    (
+        2,
+        (
+            """CREATE TABLE IF NOT EXISTS ingestion_jobs (
+                id TEXT PRIMARY KEY,
+                document_id TEXT NOT NULL,
+                tenant_id TEXT NOT NULL,
+                owner_subject TEXT NOT NULL,
+                owner_role TEXT NOT NULL,
+                owner_clearances_json TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                content_type TEXT NOT NULL,
+                size_bytes BIGINT NOT NULL,
+                sha256 TEXT NOT NULL,
+                classification TEXT NOT NULL CHECK (classification IN ('public','internal','confidential')),
+                source TEXT,
+                collection TEXT,
+                version TEXT,
+                effective_date TEXT,
+                expires_at TEXT,
+                supersedes_document_id TEXT,
+                storage_path TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('queued','processing','ready','failed')),
+                stage TEXT NOT NULL,
+                progress INTEGER NOT NULL DEFAULT 0,
+                detail TEXT NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                max_attempts INTEGER NOT NULL DEFAULT 3,
+                worker_id TEXT,
+                lease_expires_at TEXT,
+                error_code TEXT,
+                error_message TEXT,
+                error_action TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                finished_at TEXT
+            )""",
+            """CREATE INDEX IF NOT EXISTS idx_ingestion_jobs_queue
+               ON ingestion_jobs(status, lease_expires_at, created_at)""",
+            """CREATE INDEX IF NOT EXISTS idx_ingestion_jobs_tenant
+               ON ingestion_jobs(tenant_id, created_at DESC)""",
         ),
     ),
 )

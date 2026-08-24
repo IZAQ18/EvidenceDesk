@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from app.config import Classification
@@ -88,6 +88,211 @@ class Repository:
                     _now(),
                 ),
             )
+
+    def create_ingestion_job(
+        self,
+        *,
+        job_id: str,
+        document_id: str,
+        filename: str,
+        content_type: str,
+        size_bytes: int,
+        sha256: str,
+        classification: Classification,
+        source: str | None,
+        collection: str | None,
+        version: str | None,
+        effective_date: str | None,
+        expires_at: str | None,
+        supersedes_document_id: str | None,
+        storage_path: str,
+        principal: Principal,
+        max_attempts: int,
+    ) -> dict:
+        now = _now()
+        with self.database.connect() as connection:
+            connection.execute(
+                """INSERT INTO ingestion_jobs
+                   (id, document_id, tenant_id, owner_subject, owner_role,
+                    owner_clearances_json, filename, content_type, size_bytes, sha256,
+                    classification, source, collection, version, effective_date, expires_at,
+                    supersedes_document_id, storage_path, status, stage, progress, detail,
+                    attempts, max_attempts, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                           'queued', 'queued', 15, ?, 0, ?, ?, ?)""",
+                (
+                    job_id,
+                    document_id,
+                    principal.tenant_id,
+                    principal.subject,
+                    principal.role,
+                    json.dumps(principal.clearances, separators=(",", ":")),
+                    filename,
+                    content_type,
+                    size_bytes,
+                    sha256,
+                    classification,
+                    source,
+                    collection,
+                    version,
+                    effective_date,
+                    expires_at,
+                    supersedes_document_id,
+                    storage_path,
+                    "Security checks passed. Waiting for an ingestion worker.",
+                    max_attempts,
+                    now,
+                    now,
+                ),
+            )
+        return self.get_ingestion_job(job_id, principal) or {}
+
+    def claim_ingestion_job(self, worker_id: str, lease_seconds: int) -> dict | None:
+        now = _now()
+        lease = (datetime.now(UTC) + timedelta(seconds=lease_seconds)).isoformat()
+        for _ in range(5):
+            with self.database.connect() as connection:
+                row = connection.execute(
+                    """SELECT id FROM ingestion_jobs
+                       WHERE attempts < max_attempts
+                         AND (status = 'queued' OR
+                              (status = 'processing' AND lease_expires_at < ?))
+                       ORDER BY created_at LIMIT 1""",
+                    (now,),
+                ).fetchone()
+                if not row:
+                    return None
+                cursor = connection.execute(
+                    """UPDATE ingestion_jobs
+                       SET status = 'processing', stage = 'security_check', progress = 20,
+                           detail = ?, attempts = attempts + 1, worker_id = ?,
+                           lease_expires_at = ?, updated_at = ?, error_code = NULL,
+                           error_message = NULL, error_action = NULL
+                       WHERE id = ? AND attempts < max_attempts
+                         AND (status = 'queued' OR
+                              (status = 'processing' AND lease_expires_at < ?))""",
+                    (
+                        "Rechecking the staged file before extraction.",
+                        worker_id,
+                        lease,
+                        now,
+                        row["id"],
+                        now,
+                    ),
+                )
+                if cursor.rowcount:
+                    claimed = connection.execute(
+                        "SELECT * FROM ingestion_jobs WHERE id = ?", (row["id"],)
+                    ).fetchone()
+                    return dict(claimed)
+        return None
+
+    def update_ingestion_job(
+        self,
+        job_id: str,
+        worker_id: str,
+        *,
+        stage: str,
+        progress: int,
+        detail: str,
+        lease_seconds: int,
+    ) -> bool:
+        now = _now()
+        lease = (datetime.now(UTC) + timedelta(seconds=lease_seconds)).isoformat()
+        with self.database.connect() as connection:
+            cursor = connection.execute(
+                """UPDATE ingestion_jobs SET stage = ?, progress = ?, detail = ?,
+                          lease_expires_at = ?, updated_at = ?
+                   WHERE id = ? AND status = 'processing' AND worker_id = ?""",
+                (stage, progress, detail, lease, now, job_id, worker_id),
+            )
+            return cursor.rowcount > 0
+
+    def finish_ingestion_job(self, job_id: str, worker_id: str) -> bool:
+        now = _now()
+        with self.database.connect() as connection:
+            cursor = connection.execute(
+                """UPDATE ingestion_jobs
+                   SET status = 'ready', stage = 'ready', progress = 100,
+                       detail = 'Evidence is indexed and ready to search.',
+                       lease_expires_at = NULL, worker_id = NULL, updated_at = ?, finished_at = ?
+                   WHERE id = ? AND status = 'processing' AND worker_id = ?""",
+                (now, now, job_id, worker_id),
+            )
+            return cursor.rowcount > 0
+
+    def fail_ingestion_job(
+        self,
+        job_id: str,
+        worker_id: str,
+        *,
+        code: str,
+        message: str,
+        action: str | None,
+    ) -> bool:
+        now = _now()
+        with self.database.connect() as connection:
+            cursor = connection.execute(
+                """UPDATE ingestion_jobs
+                   SET status = 'failed', stage = 'failed', progress = 100, detail = ?,
+                       error_code = ?, error_message = ?, error_action = ?,
+                       lease_expires_at = NULL, worker_id = NULL, updated_at = ?, finished_at = ?
+                   WHERE id = ? AND status = 'processing' AND worker_id = ?""",
+                (message, code, message, action, now, now, job_id, worker_id),
+            )
+            return cursor.rowcount > 0
+
+    def list_ingestion_jobs(self, principal: Principal, limit: int = 20) -> list[dict]:
+        placeholders = ",".join("?" for _ in principal.clearances)
+        query = f"""SELECT * FROM ingestion_jobs WHERE tenant_id = ?
+                    AND classification IN ({placeholders})
+                    ORDER BY created_at DESC LIMIT ?"""  # noqa: S608
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                query, (principal.tenant_id, *principal.clearances, limit)
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_ingestion_job(self, job_id: str, principal: Principal) -> dict | None:
+        placeholders = ",".join("?" for _ in principal.clearances)
+        query = f"""SELECT * FROM ingestion_jobs WHERE id = ? AND tenant_id = ?
+                    AND classification IN ({placeholders})"""  # noqa: S608
+        with self.database.connect() as connection:
+            row = connection.execute(
+                query, (job_id, principal.tenant_id, *principal.clearances)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def retry_ingestion_job(self, job_id: str, principal: Principal) -> bool:
+        placeholders = ",".join("?" for _ in principal.clearances)
+        query = f"""UPDATE ingestion_jobs
+                    SET status = 'queued', stage = 'queued', progress = 15,
+                        detail = 'Retry requested. Waiting for an ingestion worker.',
+                        error_code = NULL, error_message = NULL, error_action = NULL,
+                        worker_id = NULL, lease_expires_at = NULL, finished_at = NULL,
+                        updated_at = ?
+                    WHERE id = ? AND tenant_id = ? AND status = 'failed'
+                      AND attempts < max_attempts
+                      AND classification IN ({placeholders})"""  # noqa: S608
+        with self.database.connect() as connection:
+            cursor = connection.execute(
+                query, (_now(), job_id, principal.tenant_id, *principal.clearances)
+            )
+            return cursor.rowcount > 0
+
+    def delete_ingestion_job(
+        self, job_id: str, principal: Principal
+    ) -> tuple[bool, str | None, str | None]:
+        job = self.get_ingestion_job(job_id, principal)
+        if not job or job["status"] == "processing":
+            return False, None, None
+        with self.database.connect() as connection:
+            connection.execute(
+                "DELETE FROM ingestion_jobs WHERE id = ? AND tenant_id = ?",
+                (job_id, principal.tenant_id),
+            )
+        staged_path = job.get("storage_path") if job["status"] != "ready" else None
+        return True, staged_path, job.get("document_id")
 
     def add_document(
         self,

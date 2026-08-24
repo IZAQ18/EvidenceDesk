@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -43,16 +44,17 @@ def test_postgres_accounts_ingestion_retrieval_and_tenant_isolation(tmp_path):
             connection.execute(
                 """TRUNCATE auth_sessions, workspace_members, workspaces, users,
                           payment_events, audit_events, feedback, messages, conversations,
-                          document_pages, chunks, documents RESTART IDENTITY CASCADE"""
+                          ingestion_jobs, document_pages, chunks, documents
+                          RESTART IDENTITY CASCADE"""
             )
             versions = connection.execute(
                 "SELECT version FROM schema_migrations ORDER BY version"
             ).fetchall()
-        assert [row["version"] for row in versions] == [1]
+        assert [row["version"] for row in versions] == [1, 2]
 
         first = _register(client, "FIRST@example.com", "First Team")
         uploaded = client.post(
-            "/v1/documents",
+            "/v1/ingestion-jobs",
             headers={"X-CSRF-Token": first["csrf_token"]},
             files={
                 "file": (
@@ -63,8 +65,19 @@ def test_postgres_accounts_ingestion_retrieval_and_tenant_isolation(tmp_path):
             },
             data={"classification": "internal", "source": "People Operations"},
         )
-        assert uploaded.status_code == 201, uploaded.text
-        document = uploaded.json()
+        assert uploaded.status_code == 202, uploaded.text
+        job = uploaded.json()
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            job = client.get(f"/v1/ingestion-jobs/{job['id']}").json()
+            if job["status"] == "ready":
+                break
+            time.sleep(0.05)
+        assert job["status"] == "ready", job
+        document = next(
+            item for item in client.get("/v1/documents").json()
+            if item["id"] == job["document_id"]
+        )
         assert document["has_original"] is True
 
         answer = client.post(

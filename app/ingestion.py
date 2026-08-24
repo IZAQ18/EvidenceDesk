@@ -242,24 +242,39 @@ def _extract_pdf(content: bytes, settings: Settings) -> tuple[list[ExtractedPage
         document.close()
 
 
-async def extract_upload(upload: UploadFile, settings: Settings) -> ExtractedDocument:
-    filename = _safe_filename(upload.filename)
+def validate_upload_bytes(
+    filename_value: str | None,
+    content_type_value: str | None,
+    content: bytes,
+    settings: Settings,
+) -> tuple[str, str, str]:
+    filename = _safe_filename(filename_value)
     extension = Path(filename).suffix.lower()
-    content_type = (upload.content_type or "application/octet-stream").lower()
+    content_type = (content_type_value or "application/octet-stream").lower()
     if extension not in ALLOWED_EXTENSIONS or content_type not in ALLOWED_CONTENT_TYPES:
         raise HTTPException(status_code=415, detail="Only TXT, Markdown, and PDF files are supported")
-
-    content = await upload.read(settings.max_upload_bytes + 1)
     if not content:
         raise HTTPException(status_code=400, detail="The uploaded file is empty")
     if len(content) > settings.max_upload_bytes:
         raise HTTPException(status_code=413, detail="The uploaded file exceeds the size limit")
+    if extension == ".pdf" and not content.startswith(b"%PDF-"):
+        raise HTTPException(status_code=415, detail="The file does not have a valid PDF signature")
+    return filename, extension, content_type
+
+
+def extract_bytes(
+    filename_value: str | None,
+    content_type_value: str | None,
+    content: bytes,
+    settings: Settings,
+) -> ExtractedDocument:
+    filename, extension, _ = validate_upload_bytes(
+        filename_value, content_type_value, content, settings
+    )
 
     try:
         if extension == ".pdf":
-            if not content.startswith(b"%PDF-"):
-                raise HTTPException(status_code=415, detail="The file does not have a valid PDF signature")
-            pages, method, warning = await run_in_threadpool(_extract_pdf, content, settings)
+            pages, method, warning = _extract_pdf(content, settings)
         else:
             text = _clean_text(content.decode("utf-8-sig"))
             pages, method, warning = [ExtractedPage(1, text)], "plain-text", None
@@ -280,6 +295,13 @@ async def extract_upload(upload: UploadFile, settings: Settings) -> ExtractedDoc
         sha256=hashlib.sha256(content).hexdigest(),
         extraction_method=method,
         extraction_warning=warning,
+    )
+
+
+async def extract_upload(upload: UploadFile, settings: Settings) -> ExtractedDocument:
+    content = await upload.read(settings.max_upload_bytes + 1)
+    return await run_in_threadpool(
+        extract_bytes, upload.filename, upload.content_type, content, settings
     )
 
 

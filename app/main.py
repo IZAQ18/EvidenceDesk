@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -33,7 +34,9 @@ from app.ingestion import (
     chunk_pages,
     extract_upload,
     ocr_capability,
+    validate_upload_bytes,
 )
+from app.ingestion_worker import run_ingestion_worker, stop_ingestion_worker
 from app.models import (
     AccountLoginRequest,
     AccountOut,
@@ -45,6 +48,7 @@ from app.models import (
     DocumentOut,
     DocumentStatusRequest,
     FeedbackRequest,
+    IngestionJobOut,
     MessageOut,
     Principal,
 )
@@ -158,7 +162,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             resolved_settings.env,
             capability["available"],
         )
-        yield
+        worker_stop = asyncio.Event()
+        worker_task: asyncio.Task[None] | None = None
+        if resolved_settings.ingestion_worker_enabled:
+            worker_task = asyncio.create_task(
+                run_ingestion_worker(repository, storage, resolved_settings, worker_stop)
+            )
+        try:
+            yield
+        finally:
+            if worker_task:
+                await stop_ingestion_worker(worker_stop, worker_task)
 
     show_docs = resolved_settings.env != "production" or resolved_settings.expose_api_docs
     app = FastAPI(
@@ -440,8 +454,137 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "collections",
                 "versions",
                 "reports",
+                "durable-ingestion-jobs",
             ],
         }
+
+    @app.post(
+        "/v1/ingestion-jobs",
+        response_model=IngestionJobOut,
+        status_code=202,
+        dependencies=[Depends(enforce_rate_limit)],
+    )
+    async def queue_ingestion_job(
+        file: UploadFile = File(...),
+        classification: Classification = Form(default="internal"),
+        source: str | None = Form(default=None, max_length=200),
+        collection: str | None = Form(default=None, max_length=100),
+        version: str | None = Form(default=None, max_length=50),
+        effective_date: str | None = Form(default=None),
+        expires_at: str | None = Form(default=None),
+        supersedes_document_id: str | None = Form(default=None),
+        principal: Principal = Depends(require_writer),
+        settings_value: Settings = Depends(current_settings),
+    ) -> IngestionJobOut:
+        if classification not in principal.clearances:
+            raise HTTPException(status_code=403, detail="Classification exceeds caller clearance")
+        effective = _date_value(effective_date, "Effective date")
+        expiry = _date_value(expires_at, "Expiry date")
+        if effective and expiry and expiry < effective:
+            raise HTTPException(status_code=422, detail="Expiry date cannot precede effective date")
+        if supersedes_document_id and not repository.get_document(supersedes_document_id, principal):
+            raise HTTPException(status_code=404, detail="Superseded document not found")
+
+        content = await file.read(settings_value.max_upload_bytes + 1)
+        filename, extension, supplied_content_type = validate_upload_bytes(
+            file.filename, file.content_type, content, settings_value
+        )
+        content_type = "application/pdf" if extension == ".pdf" else "text/plain"
+        document_id = str(uuid4())
+        job_id = str(uuid4())
+        storage_path = storage.save(
+            principal.tenant_id,
+            document_id,
+            extension,
+            content,
+            content_type,
+        )
+        try:
+            job = repository.create_ingestion_job(
+                job_id=job_id,
+                document_id=document_id,
+                filename=filename,
+                content_type=supplied_content_type,
+                size_bytes=len(content),
+                sha256=hashlib.sha256(content).hexdigest(),
+                classification=classification,
+                source=_clean_optional(source),
+                collection=_clean_optional(collection, 100),
+                version=_clean_optional(version, 50),
+                effective_date=effective,
+                expires_at=expiry,
+                supersedes_document_id=supersedes_document_id,
+                storage_path=storage_path,
+                principal=principal,
+                max_attempts=settings_value.ingestion_job_max_attempts,
+            )
+        except Exception:
+            storage.delete(storage_path)
+            raise
+        repository.audit(
+            principal,
+            "ingestion_job_queued",
+            "ingestion_job",
+            job_id,
+            {"filename": filename, "size_bytes": len(content)},
+        )
+        return IngestionJobOut(**job)
+
+    @app.get(
+        "/v1/ingestion-jobs",
+        response_model=list[IngestionJobOut],
+        dependencies=[Depends(enforce_rate_limit)],
+    )
+    def list_ingestion_jobs(
+        principal: Principal = Depends(authenticate_key),
+    ) -> list[IngestionJobOut]:
+        return [IngestionJobOut(**job) for job in repository.list_ingestion_jobs(principal)]
+
+    @app.get(
+        "/v1/ingestion-jobs/{job_id}",
+        response_model=IngestionJobOut,
+        dependencies=[Depends(enforce_rate_limit)],
+    )
+    def get_ingestion_job(
+        job_id: str, principal: Principal = Depends(authenticate_key)
+    ) -> IngestionJobOut:
+        job = repository.get_ingestion_job(job_id, principal)
+        if not job:
+            raise HTTPException(status_code=404, detail="Ingestion job not found")
+        return IngestionJobOut(**job)
+
+    @app.post(
+        "/v1/ingestion-jobs/{job_id}/retry",
+        response_model=IngestionJobOut,
+        status_code=202,
+    )
+    def retry_ingestion_job(
+        job_id: str, principal: Principal = Depends(require_writer)
+    ) -> IngestionJobOut:
+        if not repository.retry_ingestion_job(job_id, principal):
+            raise HTTPException(
+                status_code=409,
+                detail="Only failed jobs with attempts remaining can be retried",
+            )
+        job = repository.get_ingestion_job(job_id, principal)
+        assert job
+        repository.audit(principal, "ingestion_job_retried", "ingestion_job", job_id)
+        return IngestionJobOut(**job)
+
+    @app.delete("/v1/ingestion-jobs/{job_id}", status_code=204)
+    def delete_ingestion_job(
+        job_id: str, principal: Principal = Depends(require_writer)
+    ) -> Response:
+        deleted, staged_path, _ = repository.delete_ingestion_job(job_id, principal)
+        if not deleted:
+            raise HTTPException(
+                status_code=409,
+                detail="The job was not found or is currently processing",
+            )
+        if staged_path:
+            storage.delete(staged_path)
+        repository.audit(principal, "ingestion_job_deleted", "ingestion_job", job_id)
+        return Response(status_code=204)
 
     @app.post(
         "/v1/documents",

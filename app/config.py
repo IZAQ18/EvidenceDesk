@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     s3_kms_key_id: SecretStr | None = None
     s3_expected_bucket_owner: str | None = Field(default=None, pattern=r"^\d{12}$")
     max_upload_bytes: int = Field(default=10_000_000, ge=1, le=50_000_000)
+    ingestion_worker_enabled: bool = True
+    ingestion_worker_poll_seconds: float = Field(default=0.5, ge=0.1, le=30)
+    ingestion_job_lease_seconds: int = Field(default=300, ge=30, le=3_600)
+    ingestion_job_max_attempts: int = Field(default=3, ge=1, le=10)
     rate_limit_per_minute: int = Field(default=60, ge=1, le=10_000)
     max_chunks_per_document: int = Field(default=2_000, ge=1, le=20_000)
     max_pdf_pages: int = Field(default=100, ge=1, le=500)

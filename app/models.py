@@ -90,6 +90,25 @@ class DocumentOut(BaseModel):
     has_original: bool = False
 
 
+class IngestionJobOut(BaseModel):
+    id: str
+    document_id: str
+    filename: str
+    classification: Classification
+    status: Literal["queued", "processing", "ready", "failed"]
+    stage: Literal["security_check", "queued", "extracting", "ocr", "indexing", "ready", "failed"]
+    progress: int = Field(ge=0, le=100)
+    detail: str
+    attempts: int
+    max_attempts: int
+    error_code: str | None = None
+    error_message: str | None = None
+    error_action: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    finished_at: datetime | None = None
+
+
 class AnswerRequest(BaseModel):
     question: str = Field(min_length=3, max_length=1_000)
     top_k: int = Field(default=4, ge=1, le=10)

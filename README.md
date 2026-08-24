@@ -9,6 +9,9 @@ This is an intentionally honest portfolio MVP. It runs locally and demonstrates 
 ## What v0.9 includes
 
 - Page-aware PDF extraction with bounded OCR fallback for weak pages.
+- Durable asynchronous upload jobs with real security-check, extraction, OCR, indexing,
+  ready, and failed states; bounded retries; staged-file integrity checks; and expired-worker
+  lease recovery.
 - Original-file and extracted-page preview with highlighted cited passages.
 - Controlled query expansion, FTS5 ranking, metadata signals, and a second relevance pass.
 - Strong, partial, or insufficient evidence labels with an explanation.
@@ -44,9 +47,11 @@ Browser / API client
        ▼
 FastAPI ──► identity + tenant/classification/role policy
        │
-       ├──► ingestion ─► validate ─► extract ─► OCR weak pages ─► chunks
-       │                         ├──► safe local original store
-       │                         └──► SQLite metadata + pages + FTS5
+       ├──► upload ─► protected staging ─► durable job queue
+       │                                  └──► worker lease ─► validate
+       │                                       ─► extract/OCR ─► chunks/index
+       │                         ├──► private local or S3 original store
+       │                         └──► SQLite or PostgreSQL metadata/search
        │
        └──► answer workflow
               retrieve → expand/rank → extract → verify citations
@@ -54,6 +59,12 @@ FastAPI ──► identity + tenant/classification/role policy
 ```
 
 The agent-like workflow is deliberately bounded. Retrieval, synthesis, and citation verification add value; open-ended tools and uncontrolled loops do not. SQLite FTS5 keeps the local demo portable. Controlled concept expansion improves common policy-language matches, but it is not an embedding model. See [architecture](docs/architecture.md), [delivery plan](docs/delivery-plan.md), [threat model](docs/threat-model.md), and [AWS path](docs/aws-deployment.md).
+
+The browser queues uploads through `/v1/ingestion-jobs` and polls the durable job record. The
+legacy `/v1/documents` upload remains synchronous for API compatibility. The bundled worker is
+crash-recoverable through database leases, but it runs inside the web container and is not an
+isolated malware scanner. The AWS launch path replaces it with SQS and a separately constrained
+ECS worker plus a real malware-scanning step.
 
 ## Run locally
 
@@ -213,13 +224,17 @@ EvidenceDesk is presented as a local portfolio MVP. These assets do not claim Go
 ## API example
 
 ```bash
-curl -X POST http://localhost:8000/v1/documents \
+curl -X POST http://localhost:8000/v1/ingestion-jobs \
   -H "X-API-Key: dev-admin-key" \
   -F "file=@handbook.pdf" \
   -F "classification=internal" \
   -F "source=People Operations" \
   -F "collection=HR Policies" \
   -F "version=2.1"
+
+# Poll the returned job id until status is ready or failed.
+curl http://localhost:8000/v1/ingestion-jobs/JOB_ID \
+  -H "X-API-Key: dev-admin-key"
 
 curl -X POST http://localhost:8000/v1/answers \
   -H "X-API-Key: dev-admin-key" \
@@ -236,4 +251,4 @@ ruff check app tests
 pytest --cov=app --cov-report=term-missing --cov-fail-under=80
 ```
 
-The suite covers extraction and OCR fallback, original storage, page citations, retrieval expansion, scope, lifecycle and bulk operations, conversations and reports, feedback and metrics, tenant/classification isolation, conversation ownership, authorization, traversal protection, OIDC claim mapping, upload validation, refusal, and prompt-injection handling.
+The suite covers durable ingestion jobs and lease recovery, extraction and OCR fallback, original storage, page citations, retrieval expansion, scope, lifecycle and bulk operations, conversations and reports, feedback and metrics, tenant/classification isolation, conversation ownership, authorization, traversal protection, OIDC claim mapping, upload validation, refusal, and prompt-injection handling.

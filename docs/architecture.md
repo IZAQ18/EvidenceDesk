@@ -9,7 +9,7 @@ EvidenceDesk optimizes for traceable answers, access decisions before retrieval,
 1. **FastAPI edge:** validates requests, authenticates account sessions, API keys, or OIDC bearer tokens, applies rate limits and security headers, and exposes document, answer, conversation, feedback, report, and insight endpoints.
 2. **Account boundary:** optional self-registration creates an isolated workspace and administrator membership. Passwords use salted scrypt hashes; random sessions are stored only as SHA-256 token hashes, sent through HttpOnly cookies, expire server-side, and require a per-session CSRF token for mutations.
 3. **Policy layer:** maps identity to subject, tenant, role, and classification clearances. Those constraints are SQL predicates used before evidence reaches the answer workflow.
-4. **Ingestion:** enforces type, byte, page, OCR-page, and resolution limits; validates PDF signatures; extracts embedded text; OCRs weak PDF pages when available; records extraction diagnostics; and creates page-aware overlapping chunks.
+4. **Ingestion:** stages an authorized upload, records a durable job, and returns immediately. A database-leased worker rechecks type, byte count, digest, and PDF signature; enforces page, OCR-page, and resolution limits; extracts embedded text; OCRs weak PDF pages when available; records extraction diagnostics; and atomically creates page-aware chunks and the searchable document. Failed jobs keep a safe explanation and can be retried within a configured attempt limit.
 5. **Original store:** writes each original behind a small storage interface. Local mode uses generated tenant/document paths, containment checks, fsync, and an atomic final rename. Optional S3 mode uses tenant-scoped keys, server-side AES-256 or KMS encryption, expected-owner checks, and authenticated application streaming; it never creates a public object URL.
 6. **Evidence store:** a dual adapter records documents, pages, chunks, conversations, messages, feedback, accounts, workspaces, sessions, and text-free audit events. SQLite keeps local setup portable. PostgreSQL uses versioned migrations protected by a transaction advisory lock and is exercised in CI against PostgreSQL 16.
 7. **Retrieval:** expands a small, controlled vocabulary of common organizational concepts, combines database full-text rank, exact query overlap, metadata signals, and a second relevance pass, and deduplicates repeated sentences. SQLite uses FTS5; PostgreSQL uses a GIN-backed `to_tsvector` index and native web-search queries.
@@ -35,6 +35,8 @@ EvidenceDesk optimizes for traceable answers, access decisions before retrieval,
 - `conversations` and `messages`: owner-scoped question/answer history with structured citations and workflow summaries.
 - `feedback`: one categorized assessment per answer/user pair.
 - `audit_events`: action metadata and identifiers, not document or question text.
+- `ingestion_jobs`: tenant-scoped staged-upload metadata, progress, bounded attempts, worker lease,
+  safe failure details, and the final document identifier; never extracted document text.
 
 Archive removes a document from normal retrieval without destroying it. Permanent delete removes metadata, pages, chunks, index rows, and the original file. Superseding a version marks the older record as superseded.
 
@@ -42,7 +44,10 @@ Archive removes a document from normal retrieval without destroying it. Permanen
 
 - Controlled expansion only covers configured concepts; a pilot should evaluate embeddings and a reranker on an organization-specific test set.
 - OCR depends on scan quality, language data, layout, and Tesseract; handwriting and complex tables remain difficult.
-- Extraction and OCR are synchronous. A pilot should quarantine uploads and use isolated asynchronous workers with malware scanning.
+- Browser ingestion is asynchronous and survives web-request timeouts through durable database
+  jobs and expiring worker leases. The bundled worker still shares the web container; production
+  should use a separate constrained worker, a managed queue, a true quarantine prefix/bucket,
+  and malware scanning before extraction.
 - SQLite and in-process throttling are single-instance choices. PostgreSQL removes the database
   single-instance constraint, but connection pooling, RDS integration, backups, and restore drills
   remain deployment work.
