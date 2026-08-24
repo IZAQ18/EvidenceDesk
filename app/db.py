@@ -224,6 +224,34 @@ CREATE TABLE IF NOT EXISTS answer_diagnostics (
 );
 CREATE INDEX IF NOT EXISTS idx_answer_diagnostics_tenant
     ON answer_diagnostics(tenant_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS model_usage_daily (
+    tenant_id TEXT NOT NULL,
+    usage_date TEXT NOT NULL,
+    request_count INTEGER NOT NULL DEFAULT 0,
+    reserved_tokens INTEGER NOT NULL DEFAULT 0,
+    reserved_cost_microusd INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(tenant_id, usage_date)
+);
+
+CREATE TABLE IF NOT EXISTS model_usage_events (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    subject_hash TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    status TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    total_tokens INTEGER NOT NULL DEFAULT 0,
+    estimated_cost_microusd INTEGER NOT NULL DEFAULT 0,
+    latency_ms REAL NOT NULL DEFAULT 0,
+    fallback_reason TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_model_usage_events_tenant
+    ON model_usage_events(tenant_id, created_at DESC);
 """
 
 POSTGRES_MIGRATIONS: tuple[tuple[int, tuple[str, ...]], ...] = (
@@ -434,6 +462,37 @@ POSTGRES_MIGRATIONS: tuple[tuple[int, tuple[str, ...]], ...] = (
             )""",
             """CREATE INDEX IF NOT EXISTS idx_answer_diagnostics_tenant
                ON answer_diagnostics(tenant_id, created_at DESC)""",
+        ),
+    ),
+    (
+        4,
+        (
+            """CREATE TABLE IF NOT EXISTS model_usage_daily (
+                tenant_id TEXT NOT NULL,
+                usage_date TEXT NOT NULL,
+                request_count INTEGER NOT NULL DEFAULT 0,
+                reserved_tokens BIGINT NOT NULL DEFAULT 0,
+                reserved_cost_microusd BIGINT NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(tenant_id, usage_date)
+            )""",
+            """CREATE TABLE IF NOT EXISTS model_usage_events (
+                id TEXT PRIMARY KEY,
+                tenant_id TEXT NOT NULL,
+                subject_hash TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                status TEXT NOT NULL,
+                input_tokens BIGINT NOT NULL DEFAULT 0,
+                output_tokens BIGINT NOT NULL DEFAULT 0,
+                total_tokens BIGINT NOT NULL DEFAULT 0,
+                estimated_cost_microusd BIGINT NOT NULL DEFAULT 0,
+                latency_ms DOUBLE PRECISION NOT NULL DEFAULT 0,
+                fallback_reason TEXT,
+                created_at TEXT NOT NULL
+            )""",
+            """CREATE INDEX IF NOT EXISTS idx_model_usage_events_tenant
+               ON model_usage_events(tenant_id, created_at DESC)""",
         ),
     ),
 )

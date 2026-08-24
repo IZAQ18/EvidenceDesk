@@ -17,6 +17,8 @@ services:
         value: "12"
       - key: EVIDENCEDESK_SEED_DEMO_CONTENT
         value: "true"
+      - key: EVIDENCEDESK_MODEL_GATEWAY_ENABLED
+        value: "false"
       - key: EVIDENCEDESK_DB_PATH
         value: /tmp/evidencedesk/evidencedesk.db
       - key: EVIDENCEDESK_DOCUMENT_STORE_PATH

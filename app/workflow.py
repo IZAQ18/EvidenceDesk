@@ -3,7 +3,15 @@ from __future__ import annotations
 import re
 import time
 
-from app.models import AnswerResponse, Citation, Principal, RetrievalSummary, WorkflowStep
+from app.model_gateway import ModelGateway
+from app.models import (
+    AnswerResponse,
+    Citation,
+    GenerationSummary,
+    Principal,
+    RetrievalSummary,
+    WorkflowStep,
+)
 from app.repository import Repository, RetrievedChunk
 from app.retrieval import expanded_query_terms, passage_relevance, terms
 
@@ -29,8 +37,9 @@ def _ranked_sentences(question: str, text: str) -> list[tuple[str, dict[str, flo
 class AnswerWorkflow:
     """A fixed evidence workflow: retrieve, synthesize, verify, and safely fall back."""
 
-    def __init__(self, repository: Repository):
+    def __init__(self, repository: Repository, model_gateway: ModelGateway | None = None):
         self.repository = repository
+        self.model_gateway = model_gateway
 
     def run(
         self,
@@ -152,23 +161,74 @@ class AnswerWorkflow:
             name="synthesize", status="complete", detail="Selected source sentences and attached citations."
         ))
 
+        extractive_answer = answer
+        extractive_citations = list(citations)
+        generation = GenerationSummary()
+        if self.model_gateway and self.model_gateway.enabled:
+            clean_citations = [
+                citation
+                for citation, (chunk, _, _, _) in zip(citations, candidates, strict=True)
+                if not chunk.injection_flag
+            ]
+            if clean_citations:
+                synthesis = self.model_gateway.synthesize(question, clean_citations, principal)
+                generation = synthesis.summary
+                if synthesis.answer:
+                    answer = synthesis.answer
+                    citations = synthesis.citations
+                    trace.append(
+                        WorkflowStep(
+                            name="model_synthesize",
+                            status="passed",
+                            detail=(
+                                "The server model organized authorized excerpts; each claim passed "
+                                "citation, term, number, and negation checks."
+                            ),
+                        )
+                    )
+                else:
+                    trace.append(
+                        WorkflowStep(
+                            name="model_synthesize",
+                            status="fallback",
+                            detail=(
+                                "Used the local extractive answer because model synthesis was not "
+                                f"accepted ({generation.fallback_reason or 'unavailable'})."
+                            ),
+                        )
+                    )
+            else:
+                generation = GenerationSummary(
+                    mode="extractive_fallback", fallback_reason="prompt_injection_risk"
+                )
+                trace.append(
+                    WorkflowStep(
+                        name="model_synthesize",
+                        status="fallback",
+                        detail="Instruction-like evidence was kept out of the external model request.",
+                    )
+                )
+
         markers = {int(value) for value in re.findall(r"\[(\d+)]", answer)}
-        valid = markers == {citation.number for citation in citations} and all(
-            citation.excerpt in answer for citation in citations
-        )
+        valid = markers == {citation.number for citation in citations}
+        if generation.mode != "model":
+            valid = valid and all(citation.excerpt in answer for citation in citations)
         trace.append(WorkflowStep(
             name="verify_citations",
             status="passed" if valid else "failed",
             detail="All citation markers resolve to retrieved evidence." if valid else "Used safe evidence fallback.",
         ))
         if not valid:
-            answer = "\n".join(f"- {citation.excerpt} [{citation.number}]" for citation in citations)
+            answer = extractive_answer
+            citations = extractive_citations
+            generation.mode = "extractive_fallback"
+            generation.fallback_reason = "post_generation_citation_check"
 
         flagged = sum(chunk.injection_flag for chunk, _, _, _ in candidates)
         warning = None
         if flagged:
             warning = (
-                f"{flagged} cited chunk(s) contained instruction-like language and were treated as untrusted data."
+                f"{flagged} retrieved chunk(s) contained instruction-like language and were treated as untrusted data."
             )
         best_exact_coverage = max(metrics["exact_coverage"] for _, _, metrics, _ in candidates)
         best_semantic = max(metrics["semantic"] for _, _, metrics, _ in candidates)
@@ -193,4 +253,5 @@ class AnswerWorkflow:
             evidence_quality=quality,
             quality_reason=quality_reason,
             retrieval=retrieval,
+            generation=generation,
         )

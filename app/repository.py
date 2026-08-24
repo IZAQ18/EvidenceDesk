@@ -862,6 +862,108 @@ class Repository:
                 ),
             )
 
+    def reserve_model_budget(
+        self,
+        principal: Principal,
+        *,
+        reserved_tokens: int,
+        reserved_cost_microusd: int,
+        daily_request_limit: int,
+        daily_token_limit: int,
+        daily_cost_limit_microusd: int,
+    ) -> tuple[bool, str | None]:
+        """Atomically reserve worst-case daily capacity before an external model call."""
+        usage_date = datetime.now(UTC).date().isoformat()
+        now = _now()
+        with self.database.connect() as connection:
+            insert = (
+                """INSERT INTO model_usage_daily
+                       (tenant_id, usage_date, request_count, reserved_tokens,
+                        reserved_cost_microusd, updated_at)
+                   VALUES (?, ?, 0, 0, 0, ?)
+                   ON CONFLICT(tenant_id, usage_date) DO NOTHING"""
+                if self.database.dialect == "postgres"
+                else """INSERT OR IGNORE INTO model_usage_daily
+                       (tenant_id, usage_date, request_count, reserved_tokens,
+                        reserved_cost_microusd, updated_at)
+                   VALUES (?, ?, 0, 0, 0, ?)"""
+            )
+            connection.execute(insert, (principal.tenant_id, usage_date, now))
+            cursor = connection.execute(
+                """UPDATE model_usage_daily
+                   SET request_count = request_count + 1,
+                       reserved_tokens = reserved_tokens + ?,
+                       reserved_cost_microusd = reserved_cost_microusd + ?,
+                       updated_at = ?
+                   WHERE tenant_id = ? AND usage_date = ?
+                     AND request_count + 1 <= ?
+                     AND reserved_tokens + ? <= ?
+                     AND reserved_cost_microusd + ? <= ?""",
+                (
+                    reserved_tokens,
+                    reserved_cost_microusd,
+                    now,
+                    principal.tenant_id,
+                    usage_date,
+                    daily_request_limit,
+                    reserved_tokens,
+                    daily_token_limit,
+                    reserved_cost_microusd,
+                    daily_cost_limit_microusd,
+                ),
+            )
+            if cursor.rowcount == 1:
+                return True, None
+            current = connection.execute(
+                """SELECT request_count, reserved_tokens, reserved_cost_microusd
+                   FROM model_usage_daily WHERE tenant_id = ? AND usage_date = ?""",
+                (principal.tenant_id, usage_date),
+            ).fetchone()
+        if current and current["request_count"] + 1 > daily_request_limit:
+            return False, "daily_request_limit"
+        if current and current["reserved_tokens"] + reserved_tokens > daily_token_limit:
+            return False, "daily_token_limit"
+        return False, "daily_cost_limit"
+
+    def record_model_usage(
+        self,
+        *,
+        event_id: str,
+        principal: Principal,
+        subject_hash: str,
+        provider: str,
+        model: str,
+        status: str,
+        input_tokens: int,
+        output_tokens: int,
+        estimated_cost_microusd: int,
+        latency_ms: float,
+        fallback_reason: str | None,
+    ) -> None:
+        with self.database.connect() as connection:
+            connection.execute(
+                """INSERT INTO model_usage_events
+                   (id, tenant_id, subject_hash, provider, model, status,
+                    input_tokens, output_tokens, total_tokens,
+                    estimated_cost_microusd, latency_ms, fallback_reason, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    event_id,
+                    principal.tenant_id,
+                    subject_hash,
+                    provider,
+                    model,
+                    status,
+                    input_tokens,
+                    output_tokens,
+                    input_tokens + output_tokens,
+                    estimated_cost_microusd,
+                    latency_ms,
+                    fallback_reason,
+                    _now(),
+                ),
+            )
+
     def admin_metrics(self, principal: Principal) -> dict:
         with self.database.connect() as connection:
             documents = connection.execute(
@@ -918,11 +1020,35 @@ class Repository:
                    FROM answer_diagnostics WHERE tenant_id = ?""",
                 (principal.tenant_id,),
             ).fetchone()
+            model_usage = connection.execute(
+                """SELECT COUNT(*) requests,
+                          COALESCE(SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END),0) completed,
+                          COALESCE(SUM(CASE WHEN status!='completed' THEN 1 ELSE 0 END),0) fallbacks,
+                          COALESCE(SUM(input_tokens),0) input_tokens,
+                          COALESCE(SUM(output_tokens),0) output_tokens,
+                          COALESCE(SUM(estimated_cost_microusd),0) estimated_cost_microusd,
+                          COALESCE(AVG(latency_ms),0) avg_latency_ms
+                   FROM model_usage_events WHERE tenant_id = ?""",
+                (principal.tenant_id,),
+            ).fetchone()
+            model_usage_today = connection.execute(
+                """SELECT request_count, reserved_tokens, reserved_cost_microusd
+                   FROM model_usage_daily WHERE tenant_id = ? AND usage_date = ?""",
+                (principal.tenant_id, datetime.now(UTC).date().isoformat()),
+            ).fetchone()
         return {
             "documents": dict(documents),
             "answers": dict(answers),
             "feedback": {row["category"]: row["count"] for row in feedback_rows},
             "retrieval": dict(retrieval),
+            "model_usage": {
+                **dict(model_usage),
+                "today": dict(model_usage_today) if model_usage_today else {
+                    "request_count": 0,
+                    "reserved_tokens": 0,
+                    "reserved_cost_microusd": 0,
+                },
+            },
             "recent_audit": [
                 {**dict(row), "detail": json.loads(row["detail_json"])} for row in recent_audit
             ],

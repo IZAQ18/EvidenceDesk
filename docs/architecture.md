@@ -13,13 +13,14 @@ EvidenceDesk optimizes for traceable answers, access decisions before retrieval,
 5. **Original store:** writes each original behind a small storage interface. Local mode uses generated tenant/document paths, containment checks, fsync, and an atomic final rename. Optional S3 mode uses tenant-scoped keys, server-side AES-256 or KMS encryption, expected-owner checks, and authenticated application streaming; it never creates a public object URL.
 6. **Evidence store:** a dual adapter records documents, pages, chunks, conversations, messages, feedback, accounts, workspaces, sessions, and text-free audit events. SQLite keeps local setup portable. PostgreSQL uses versioned migrations protected by a transaction advisory lock and is exercised in CI against PostgreSQL 16.
 7. **Retrieval:** first applies tenant, classification, lifecycle, and explicit document scope in SQL. It then combines database full-text results with a bounded authorized candidate pool scored by transparent local semantic feature vectors. Reciprocal rank fusion and a question-aware passage reranker reward direct term coverage, domain concepts, metadata, and answer shapes such as quantities or deadlines. SQLite uses FTS5; PostgreSQL uses a GIN-backed `to_tsvector` index and native web-search queries.
-8. **Bounded answer workflow:** selects supported source passages, creates structured page citations, verifies every marker and exact excerpt, labels evidence quality, and refuses when support is insufficient. No generative model is active in the free pilot.
-9. **Browser workspace:** combines account-aware onboarding, conversation history, explicit document scope, evidence inspection, original preview, library lifecycle tools, feedback, reports, and admin-only operational signals.
+8. **Bounded answer workflow:** selects supported source passages, creates structured page citations, labels evidence quality, and refuses when support is insufficient. An optional server-managed model can organize only the selected authorized excerpts. Strict output, citation, number, negation, and term-support checks run before acceptance; every failure uses the local extractive answer. The free pilot keeps this gateway disabled.
+9. **Usage-control layer:** atomically reserves a daily request/token/cost budget before a provider call and records only provider/model metadata, a one-way subject hash, counts, estimated cost, latency, status, and fallback reason.
+10. **Browser workspace:** combines account-aware onboarding, conversation history, explicit document scope, evidence inspection, original preview, library lifecycle tools, feedback, reports, and admin-only operational signals.
 
 ## Why these decisions
 
 - **Citation-first, not chatbot-first:** citations come from retrieved database rows and page records, never generated URLs.
-- **Extractive by default:** source sentences are less conversational than model prose but are reproducible, free to run, and easier to verify.
+- **Extractive by default and fallback:** source sentences remain available when a model is disabled, unavailable, over quota, or fails validation.
 - **Bounded agent behavior:** retrieve, synthesize, and verify are fixed steps. Documents cannot request tools or create new loops.
 - **Authorization in retrieval:** filtered chunks never enter synthesis, citation responses, preview endpoints, reports, or history.
 - **OCR only when needed:** OCR is expensive and imperfect, so the service first measures embedded text, then OCRs only weak pages within configured limits.
@@ -39,6 +40,9 @@ EvidenceDesk optimizes for traceable answers, access decisions before retrieval,
 - `audit_events`: action metadata and identifiers, not document or question text.
 - `ingestion_jobs`: tenant-scoped staged-upload metadata, progress, bounded attempts, worker lease,
   safe failure details, and the final document identifier; never extracted document text.
+- `model_usage_daily` and `model_usage_events`: conservative daily budget reservations and
+  text-free provider usage/fallback metadata. They do not store prompts, answers, excerpts, or
+  document text.
 
 Archive removes a document from normal retrieval without destroying it. Permanent delete removes metadata, pages, chunks, index rows, and the original file. Superseding a version marks the older record as superseded.
 
@@ -62,4 +66,6 @@ Archive removes a document from normal retrieval without destroying it. Permanen
 - The account boundary is intentionally backed by SQLite for local acceptance testing. Public
   registration must wait for managed PostgreSQL, verified email, password recovery, invitations,
   deletion/export controls, and abuse monitoring.
-- The extractive answerer intentionally favors evidence over conversational polish. Any future model must preserve structured citations, access predicates, refusal, and verification.
+- The optional model gateway has strict mechanical support checks, but those checks are not a
+  semantic-entailment proof. Customer-specific evaluation, provider privacy review, a provider-side
+  budget, and human review for consequential use remain required.

@@ -6,7 +6,7 @@ EvidenceDesk is a secure, citation-first knowledge assistant for organizational 
 
 This is an intentionally honest portfolio MVP. It runs locally and demonstrates production-minded design, but it is **not** represented as GovCloud-ready, compliance-certified, or proven at large scale.
 
-## What v0.9 includes
+## What v1.0 includes
 
 - Page-aware PDF extraction with bounded OCR fallback for weak pages.
 - Durable asynchronous upload jobs with real security-check, extraction, OCR, indexing,
@@ -18,6 +18,11 @@ This is an intentionally honest portfolio MVP. It runs locally and demonstrates 
 - Strong, partial, or insufficient evidence labels with an explanation.
 - Per-answer retrieval diagnostics and text-free admin quality metrics: authorized candidate
   count, lexical/semantic hits, rerank strength, refusal count, and retrieval latency.
+- An optional server-managed Responses API gateway: visitors never paste a model key; only the
+  question and selected authorized excerpts are sent; strict structured claims are checked for
+  citation IDs, quantities, negation, and term support; every failure uses the extractive answer.
+- Atomic daily request, token, and estimated-cost reservations plus a text-free model usage ledger
+  and admin metrics. The protected free pilot keeps this provider gateway disabled.
 - Explicit document scope, collections, versions, effective/expiry dates, supersession, archive/restore, and bulk actions.
 - Persistent conversations, follow-up questions, per-answer feedback, and Markdown report export.
 - Tenant and classification filtering before retrieval; role checks for administration; ownership checks for conversation data.
@@ -57,7 +62,8 @@ FastAPI ──► identity + tenant/classification/role policy
        │                         └──► SQLite or PostgreSQL metadata/search
        │
        └──► answer workflow
-              retrieve → expand/rank → extract → verify citations
+              retrieve → expand/rank → extract ──────────────► verify citations
+                                      └→ optional bounded model ┘
                                       └→ refuse when evidence is weak
 ```
 
@@ -67,6 +73,11 @@ SQLite FTS5 keeps the local demo portable. The local semantic encoder uses trans
 policy features rather than a pretrained neural embedding model. See [architecture](docs/architecture.md),
 [evaluation](docs/evaluation.md), [delivery plan](docs/delivery-plan.md), [threat model](docs/threat-model.md),
 and [AWS path](docs/aws-deployment.md).
+
+The optional model gateway is server-managed and fail-safe; it is not an autonomous agent. See the
+[gateway privacy, validation, and cost controls](docs/model-gateway.md). OpenAI's current official
+[data controls](https://developers.openai.com/api/docs/guides/your-data) explain why `store:false`
+does not by itself promise zero provider retention.
 
 The browser queues uploads through `/v1/ingestion-jobs` and polls the durable job record. The
 legacy `/v1/documents` upload remains synchronous for API compatibility. The bundled worker is
@@ -166,6 +177,28 @@ streaming, retrieval, citation generation, and cross-workspace isolation. This i
 evidence, not a claim that EvidenceDesk has operated an AWS RDS production workload. Connection
 pooling, backup/restore drills, and AWS infrastructure acceptance remain launch gates.
 
+### Optional server-managed model synthesis
+
+Keep the gateway disabled for the free pilot. To evaluate it privately, store a project key only
+in the server environment, copy the provider's current input/output prices, set small daily
+request/token/cost ceilings, and also set a hard provider-side project budget. Visitors do not need
+and cannot view this key.
+
+```dotenv
+EVIDENCEDESK_MODEL_GATEWAY_ENABLED=true
+EVIDENCEDESK_MODEL_API_KEY=server-only-project-key
+EVIDENCEDESK_MODEL_NAME=gpt-5-mini
+EVIDENCEDESK_MODEL_INPUT_PRICE_PER_MILLION_USD=replace-with-current-price
+EVIDENCEDESK_MODEL_OUTPUT_PRICE_PER_MILLION_USD=replace-with-current-price
+EVIDENCEDESK_MODEL_DAILY_REQUEST_LIMIT=25
+EVIDENCEDESK_MODEL_DAILY_TOKEN_LIMIT=100000
+EVIDENCEDESK_MODEL_DAILY_COST_LIMIT_CENTS=100
+```
+
+EvidenceDesk refuses to enable the gateway without a key, HTTPS endpoint, and non-zero prices.
+The application estimate is useful for protection and visibility, while the provider dashboard
+remains the billing source of truth. Use only synthetic documents until privacy review is complete.
+
 ### Docker
 
 ```bash
@@ -250,7 +283,9 @@ curl -X POST http://localhost:8000/v1/answers \
   -d '{"question":"What is the annual leave policy?","top_k":6}'
 ```
 
-Every answer includes `grounded`, `evidence_quality`, `quality_reason`, structured citations, and a workflow trace containing step names rather than private model reasoning.
+Every answer includes `grounded`, `evidence_quality`, `quality_reason`, structured citations, a
+`generation` summary (mode, text-free usage, cost estimate, and fallback reason), and a workflow
+trace containing step names rather than private model reasoning.
 
 Run the real synthetic answer-quality benchmark with:
 
@@ -270,4 +305,9 @@ ruff check app tests
 pytest --cov=app --cov-report=term-missing --cov-fail-under=80
 ```
 
-The suite covers durable ingestion jobs and lease recovery, extraction and OCR fallback, original storage, page citations, retrieval expansion, scope, lifecycle and bulk operations, conversations and reports, feedback and metrics, tenant/classification isolation, conversation ownership, authorization, traversal protection, OIDC claim mapping, upload validation, refusal, and prompt-injection handling.
+The suite covers durable ingestion jobs and lease recovery, extraction and OCR fallback, original
+storage, page citations, retrieval expansion, scope, lifecycle and bulk operations, conversations
+and reports, feedback and metrics, tenant/classification isolation, conversation ownership,
+authorization, traversal protection, OIDC claim mapping, upload validation, refusal,
+prompt-injection handling, invalid model citations/claims, provider timeout, quota exhaustion,
+key non-disclosure, and usage-metadata privacy.

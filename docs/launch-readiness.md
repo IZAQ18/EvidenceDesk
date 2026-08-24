@@ -17,7 +17,7 @@ the organization has not supplied enough information.
 | Durable data | Managed PostgreSQL, private object storage, backups, restore exercise | PostgreSQL adapter/migrations and private S3 adapter implemented; PostgreSQL 16 path tested in CI. AWS integration, pooling, backups, and restore exercise pending |
 | Ingestion | Async processing, malware scan, progress, resilient OCR and table handling | Durable jobs, visible progress, bounded retry, integrity verification, and lease recovery implemented; isolated workers, malware scanning, and advanced table extraction pending |
 | Answer quality | Organization-specific gold set, >=95% retrieval success, >=98% valid citations | Hybrid local semantic retrieval, reranking, diagnostics, and an 8-case synthetic regression benchmark implemented; customer-specific held-out evaluation pending |
-| Customer AI | Server-managed provider, quotas, cost controls, no customer key required | Pending |
+| Customer AI | Server-managed provider, quotas, cost controls, no customer key required | Gateway, fallbacks, usage controls, and fake-provider tests implemented; provider/privacy acceptance and live configuration pending |
 | Billing | Hosted checkout, verified webhooks, entitlements, portal, cancellation, refunds | Verified event intake exists; entitlements pending |
 | User control | Export, document deletion, conversation deletion, complete account deletion | Partial; account deletion pending |
 | Trust | Terms, privacy, retention, subprocessors, support and honest limitations | Pilot notices exist; commercial documents pending |
@@ -88,3 +88,23 @@ The local benchmark currently passes all eight cases. This is regression evidenc
 synthetic corpus, not a claim of 100% customer accuracy. No generative model or pretrained neural
 embedding provider is active in the free pilot. Those require provider selection, privacy terms,
 cost controls, adversarial evaluation, and a customer-specific held-out benchmark.
+
+## Milestone 4 evidence
+
+The optional server-managed AI path now provides:
+
+- a server-only project key, with no customer or browser API-key field;
+- a bounded request containing the current question and selected authorized excerpts—not full
+  files, whole documents, or conversation history;
+- strict structured output with server-owned citation markers;
+- rejection of unknown citation IDs, unsupported quantities, changed negation, weak term support,
+  invalid responses, timeouts, and instruction-like evidence;
+- atomic daily request, token, and estimated-cost reservations before provider calls;
+- a text-free usage ledger and admin visibility for completions, fallbacks, tokens, latency, and
+  estimated cost; and
+- the local extractive answer as a fail-safe for every gateway failure.
+
+The gateway remains disabled on the public Render pilot. Enabling it requires a private server
+key, current provider prices, a deliberate application ceiling, a provider-side hard budget,
+privacy/subprocessor review, and customer-specific evaluation. Mechanical claim checks are not a
+proof that every paraphrase is semantically entailed.

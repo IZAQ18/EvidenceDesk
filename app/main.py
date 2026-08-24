@@ -37,6 +37,7 @@ from app.ingestion import (
     validate_upload_bytes,
 )
 from app.ingestion_worker import run_ingestion_worker, stop_ingestion_worker
+from app.model_gateway import ModelGateway, ModelTransport
 from app.models import (
     AccountLoginRequest,
     AccountOut,
@@ -140,8 +141,13 @@ def _seed_demo_documents(
         )
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    *,
+    model_transport: ModelTransport | None = None,
+) -> FastAPI:
     resolved_settings = settings or get_settings()
+    resolved_settings.validate_model_gateway()
     database = build_database(resolved_settings)
     repository = Repository(
         database,
@@ -149,13 +155,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         semantic_min_score=resolved_settings.semantic_min_score,
     )
     storage = build_document_storage(resolved_settings)
-    workflow = AnswerWorkflow(repository)
+    model_gateway = ModelGateway(resolved_settings, repository, model_transport)
+    workflow = AnswerWorkflow(repository, model_gateway)
     account_store = AccountStore(database, resolved_settings.account_session_hours)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         resolved_settings.validate_auth()
         resolved_settings.validate_storage()
+        resolved_settings.validate_model_gateway()
         resolved_settings.resolved_api_keys()
         database.initialize()
         if resolved_settings.seed_demo_content:
@@ -181,7 +189,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     show_docs = resolved_settings.env != "production" or resolved_settings.expose_api_docs
     app = FastAPI(
         title="EvidenceDesk",
-        version="0.9.0",
+        version="1.0.0",
         description="A secure evidence workspace with citations, OCR, conversations, and feedback.",
         lifespan=lifespan,
         docs_url="/docs" if show_docs else None,
@@ -195,6 +203,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = resolved_settings
     app.state.repository = repository
     app.state.account_store = account_store
+    app.state.model_gateway = model_gateway
 
     def current_settings() -> Settings:
         return resolved_settings
@@ -262,7 +271,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 connection.execute("SELECT 1").fetchone()
         except Exception as exc:
             raise HTTPException(status_code=503, detail="Database unavailable") from exc
-        return {"status": "ok", "service": "evidencedesk", "version": "0.9.0"}
+        return {"status": "ok", "service": "evidencedesk", "version": "1.0.0"}
 
     @app.get("/robots.txt", response_class=PlainTextResponse, include_in_schema=False)
     def robots() -> PlainTextResponse:
@@ -448,13 +457,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "supported_files": [".txt", ".md", ".pdf"],
             "max_upload_bytes": resolved_settings.max_upload_bytes,
             "max_pdf_pages": resolved_settings.max_pdf_pages,
-            "answer_mode": "hybrid-semantic-extractive-citation-verified",
+            "answer_mode": (
+                "hybrid-semantic-model-assisted-citation-verified"
+                if resolved_settings.model_gateway_enabled
+                else "hybrid-semantic-extractive-citation-verified"
+            ),
             "retrieval": {
                 "mode": "authorized-keyword-plus-local-semantic",
                 "encoder": "deterministic-auditable-policy-feature-vectors",
                 "neural_embeddings": False,
                 "candidate_limit": resolved_settings.semantic_candidate_limit,
                 "reranking": True,
+            },
+            "generation": {
+                "enabled": resolved_settings.model_gateway_enabled,
+                "mode": "server-managed-with-extractive-fallback"
+                if resolved_settings.model_gateway_enabled
+                else "local-extractive",
+                "provider": resolved_settings.model_provider
+                if resolved_settings.model_gateway_enabled
+                else None,
+                "model": resolved_settings.model_name
+                if resolved_settings.model_gateway_enabled
+                else None,
+                "browser_api_keys": False,
+                "external_data": "question-and-authorized-excerpts-only"
+                if resolved_settings.model_gateway_enabled
+                else "none",
+                "response_storage_requested": False,
+                "daily_request_limit": resolved_settings.model_daily_request_limit,
+                "daily_token_limit": resolved_settings.model_daily_token_limit,
+                "daily_cost_limit_cents": resolved_settings.model_daily_cost_limit_cents,
             },
             "auth_mode": resolved_settings.auth_mode,
             "features": [
@@ -469,6 +502,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "hybrid-semantic-retrieval",
                 "evidence-reranking",
                 "retrieval-quality-metrics",
+                "server-managed-model-gateway",
+                "model-usage-quotas",
+                "mechanical-claim-support-checks",
+                "automatic-extractive-fallback",
             ],
         }
 

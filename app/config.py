@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -53,6 +54,19 @@ class Settings(BaseSettings):
     max_chunks_per_document: int = Field(default=2_000, ge=1, le=20_000)
     semantic_candidate_limit: int = Field(default=600, ge=50, le=5_000)
     semantic_min_score: float = Field(default=0.08, ge=0.0, le=1.0)
+    model_gateway_enabled: bool = False
+    model_provider: Literal["openai_responses"] = "openai_responses"
+    model_api_key: SecretStr | None = None
+    model_base_url: str = "https://api.openai.com/v1"
+    model_name: str = Field(default="gpt-5-mini", min_length=1, max_length=100)
+    model_timeout_seconds: float = Field(default=20.0, ge=1.0, le=60.0)
+    model_max_evidence_chars: int = Field(default=12_000, ge=1_000, le=50_000)
+    model_max_output_tokens: int = Field(default=600, ge=100, le=2_000)
+    model_daily_request_limit: int = Field(default=100, ge=1, le=100_000)
+    model_daily_token_limit: int = Field(default=250_000, ge=1_000, le=100_000_000)
+    model_daily_cost_limit_cents: int = Field(default=100, ge=1, le=1_000_000)
+    model_input_price_per_million_usd: Decimal = Field(default=Decimal("0"), ge=0)
+    model_output_price_per_million_usd: Decimal = Field(default=Decimal("0"), ge=0)
     max_pdf_pages: int = Field(default=100, ge=1, le=500)
     ocr_enabled: bool = True
     ocr_languages: str = Field(default="eng", pattern=r"^[a-zA-Z0-9_+.-]+$")
@@ -88,6 +102,11 @@ class Settings(BaseSettings):
         if not normalized.startswith("https://"):
             raise ValueError("Payment and support URLs must use HTTPS")
         return normalized
+
+    @field_validator("model_base_url")
+    @classmethod
+    def validate_model_base_url(cls, value: str) -> str:
+        return value.strip().rstrip("/")
 
     def resolved_api_keys(self) -> dict[str, PrincipalConfig]:
         if isinstance(self.api_keys, dict) and self.api_keys:
@@ -159,6 +178,23 @@ class Settings(BaseSettings):
             secure_modes = ("sslmode=require", "sslmode=verify-ca", "sslmode=verify-full")
             if not any(mode in url.lower() for mode in secure_modes):
                 raise RuntimeError("Production PostgreSQL connections must require TLS")
+
+    def validate_model_gateway(self) -> None:
+        if not self.model_gateway_enabled:
+            return
+        if self.model_api_key is None or not self.model_api_key.get_secret_value().strip():
+            raise RuntimeError(
+                "EVIDENCEDESK_MODEL_API_KEY is required when the model gateway is enabled"
+            )
+        if not self.model_base_url.startswith("https://"):
+            raise RuntimeError("The model gateway base URL must use HTTPS")
+        if (
+            self.model_input_price_per_million_usd <= 0
+            or self.model_output_price_per_million_usd <= 0
+        ):
+            raise RuntimeError(
+                "Configure current input and output token prices before enabling the model gateway"
+            )
 
     def resolved_allowed_hosts(self) -> list[str]:
         return [host.strip() for host in self.allowed_hosts.split(",") if host.strip()]

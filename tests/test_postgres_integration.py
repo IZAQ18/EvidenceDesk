@@ -42,7 +42,8 @@ def test_postgres_accounts_ingestion_retrieval_and_tenant_isolation(tmp_path):
         database = app.state.repository.database
         with database.connect() as connection:
             connection.execute(
-                """TRUNCATE auth_sessions, workspace_members, workspaces, users,
+                """TRUNCATE model_usage_events, model_usage_daily,
+                          auth_sessions, workspace_members, workspaces, users,
                           payment_events, audit_events, feedback, answer_diagnostics,
                           messages, conversations,
                           ingestion_jobs, document_pages, chunks, documents
@@ -51,7 +52,7 @@ def test_postgres_accounts_ingestion_retrieval_and_tenant_isolation(tmp_path):
             versions = connection.execute(
                 "SELECT version FROM schema_migrations ORDER BY version"
             ).fetchall()
-        assert [row["version"] for row in versions] == [1, 2, 3]
+        assert [row["version"] for row in versions] == [1, 2, 3, 4]
 
         first = _register(client, "FIRST@example.com", "First Team")
         uploaded = client.post(
@@ -92,9 +93,11 @@ def test_postgres_accounts_ingestion_retrieval_and_tenant_isolation(tmp_path):
         assert result["citations"][0]["document_id"] == document["id"]
         assert "twenty" in result["answer"].lower()
         assert result["retrieval"]["semantic_hits"] >= 1
-        quality_metrics = client.get("/v1/admin/metrics").json()["retrieval"]
+        admin_metrics = client.get("/v1/admin/metrics").json()
+        quality_metrics = admin_metrics["retrieval"]
         assert quality_metrics["queries"] == 1
         assert quality_metrics["avg_best_rerank_score"] > 0
+        assert admin_metrics["model_usage"]["completed"] == 0
         assert client.get(f"/v1/documents/{document['id']}/content").content.startswith(
             b"Employees receive twenty"
         )

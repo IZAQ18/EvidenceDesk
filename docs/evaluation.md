@@ -4,6 +4,11 @@ EvidenceDesk includes a deterministic synthetic acceptance benchmark that runs t
 authorization predicates, hybrid retrieval, reranker, extractive synthesis, and citation verifier.
 It does not mock retrieval scores and does not send evaluation text to an external model.
 
+The automated suite also runs the optional gateway against a fake provider, never a billable API.
+It requires a supported structured answer to pass and exercises invalid citation IDs, invented
+quantities, prompt-injection exclusion, provider timeout, daily quota exhaustion, server-key
+non-disclosure, strict `store:false` payloads, and text-free usage metadata.
+
 Run it with:
 
 ```bash

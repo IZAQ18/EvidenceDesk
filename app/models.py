@@ -144,6 +144,19 @@ class RetrievalSummary(BaseModel):
     duration_ms: float = 0.0
 
 
+class GenerationSummary(BaseModel):
+    mode: Literal["extractive", "model", "extractive_fallback"] = "extractive"
+    provider: str | None = None
+    model: str | None = None
+    usage_event_id: str | None = None
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    estimated_cost_microusd: int = 0
+    latency_ms: float = 0.0
+    fallback_reason: str | None = None
+
+
 class AnswerResponse(BaseModel):
     answer: str
     grounded: bool
@@ -153,6 +166,7 @@ class AnswerResponse(BaseModel):
     evidence_quality: Literal["strong", "partial", "insufficient"] = "insufficient"
     quality_reason: str = "No direct evidence was available."
     retrieval: RetrievalSummary | None = None
+    generation: GenerationSummary = Field(default_factory=GenerationSummary)
     conversation_id: str | None = None
     message_id: str | None = None
 
