@@ -51,6 +51,7 @@ from app.pilot import (
     pilot_cookie_value,
     pilot_principal,
 )
+from app.public_site import public_page
 from app.repository import DuplicateDocumentError, Repository
 from app.security import authenticate_key, enforce_rate_limit, require_admin, require_writer
 from app.storage import DocumentStorage
@@ -143,7 +144,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     show_docs = resolved_settings.env != "production" or resolved_settings.expose_api_docs
     app = FastAPI(
         title="EvidenceDesk",
-        version="0.7.0",
+        version="0.8.0",
         description="A secure evidence workspace with citations, OCR, conversations, and feedback.",
         lifespan=lifespan,
         docs_url="/docs" if show_docs else None,
@@ -172,6 +173,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "/pilot-background.png",
             "/developer-signature.png",
             "/access",
+            "/about",
             "/v1/payments/webhook",
         }
         if (
@@ -188,11 +190,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
-        response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+        is_public_site = request.url.path == "/about"
+        response.headers["X-Robots-Tag"] = (
+            "index, follow" if is_public_site else "noindex, nofollow, noarchive"
+        )
         response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
         response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-        response.headers["Cache-Control"] = "no-store"
+        response.headers["Cache-Control"] = "public, max-age=300" if is_public_site else "no-store"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self' blob:; style-src 'self' 'unsafe-inline'; "
             "script-src 'self' 'unsafe-inline'; connect-src 'self'; "
@@ -216,11 +221,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 connection.execute("SELECT 1").fetchone()
         except sqlite3.Error as exc:
             raise HTTPException(status_code=503, detail="Database unavailable") from exc
-        return {"status": "ok", "service": "evidencedesk", "version": "0.7.0"}
+        return {"status": "ok", "service": "evidencedesk", "version": "0.8.0"}
 
     @app.get("/robots.txt", response_class=PlainTextResponse, include_in_schema=False)
     def robots() -> PlainTextResponse:
-        return PlainTextResponse("User-agent: *\nDisallow: /\n")
+        return PlainTextResponse("User-agent: *\nAllow: /about\nDisallow: /\n")
 
     @app.get("/social-card.png", include_in_schema=False)
     def social_card() -> FileResponse:
@@ -241,6 +246,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return FileResponse(
             Path(__file__).parent / "assets" / "izaq-developer-signature.png",
             media_type="image/png",
+        )
+
+    @app.get("/about", response_class=HTMLResponse, include_in_schema=False)
+    def about() -> HTMLResponse:
+        return HTMLResponse(
+            public_page(
+                checkout_url=resolved_settings.checkout_url,
+                support_url=resolved_settings.support_url,
+            )
         )
 
     @app.get(

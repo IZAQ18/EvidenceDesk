@@ -24,7 +24,15 @@ def test_protected_pilot_gate_and_seeded_content(tmp_path):
         assert "max-age=31536000" in health.headers["strict-transport-security"]
 
         robots = client.get("/robots.txt")
-        assert robots.text == "User-agent: *\nDisallow: /\n"
+        assert robots.text == "User-agent: *\nAllow: /about\nDisallow: /\n"
+
+        public_site = client.get("/about")
+        assert public_site.status_code == 200
+        assert "Support IZAQ" in public_site.text
+        assert "40%" in public_site.text
+        assert "registered charity" in public_site.text
+        assert public_site.headers["x-robots-tag"] == "index, follow"
+        assert "public" in public_site.headers["cache-control"]
 
         locked_page = client.get("/", follow_redirects=False)
         assert locked_page.status_code == 307

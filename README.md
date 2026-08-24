@@ -6,7 +6,7 @@ EvidenceDesk is a secure, citation-first knowledge assistant for organizational 
 
 This is an intentionally honest portfolio MVP. It runs locally and demonstrates production-minded design, but it is **not** represented as GovCloud-ready, compliance-certified, or proven at large scale.
 
-## What v0.7 includes
+## What v0.8 includes
 
 - Page-aware PDF extraction with bounded OCR fallback for weak pages.
 - Original-file and extracted-page preview with highlighted cited passages.
@@ -24,6 +24,8 @@ This is an intentionally honest portfolio MVP. It runs locally and demonstrates 
 - An IZAQ portrait signature across the access gate, cinematic intro, header, and product rail.
 - A clearly labeled freemium product preview with Free, planned Pro, a founding Team pilot, and provider-hosted checkout/support links.
 - Lemon Squeezy-compatible HMAC webhook verification, idempotent payment-event storage, masked customer hints, and admin-only payment notifications. Paid feature entitlements are not active yet.
+- A public `/about` product page for LinkedIn visitors and payment-provider review, while the document workspace remains behind the private pilot gate.
+- A larger IZAQ support presentation with a clearly labeled 40% developer charity pledge. No banking identifiers are committed or displayed.
 - Docker, GitHub Actions CI, evaluation/security tests, and a concrete path to standard AWS.
 
 ## Architecture at a glance
@@ -107,6 +109,8 @@ EVIDENCEDESK_PAYMENT_WEBHOOK_SECRET=generated-in-the-provider-dashboard
 ```
 
 The webhook endpoint is `/v1/payments/webhook`. It verifies the provider signature before storing a minimal event and never receives card or MCB account details. The safest first commercial offer is a **founding team pilot**: one organization pays for controlled onboarding, an agreed synthetic/non-sensitive evaluation, and a clear success report. Subscription checkout should follow only after durable storage, accounts, usage metering, entitlements, terms, privacy, and refunds exist. See the [monetization plan](docs/monetization.md).
+
+The public marketing and provider-review URL is `/about`. It describes the product, plans, honest limitations, privacy boundary, and payment/refund status without exposing the protected workspace. Use the full deployed `https://...onrender.com/about` address in LinkedIn and payment-provider onboarding.
 
 ## A simple demo
 
