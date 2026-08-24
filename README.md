@@ -25,7 +25,7 @@ This is an intentionally honest portfolio MVP. It runs locally and demonstrates 
 - A clearly labeled freemium product preview with Free, planned Pro, a founding Team pilot, and provider-hosted checkout/support links.
 - Lemon Squeezy-compatible HMAC webhook verification, idempotent payment-event storage, masked customer hints, and admin-only payment notifications. Paid feature entitlements are not active yet.
 - A public `/about` product page for LinkedIn visitors and payment-provider review, while the document workspace remains behind the private pilot gate.
-- A larger IZAQ support presentation with a clearly labeled 40% developer charity pledge. No banking identifiers are committed or displayed.
+- A larger IZAQ support presentation with consented MCB and NayaPay recipient details plus a clearly labeled 40% developer charity pledge. The MCB value is labeled as an account number because it is not a full Pakistan-format IBAN.
 - Docker, GitHub Actions CI, evaluation/security tests, and a concrete path to standard AWS.
 
 ## Architecture at a glance
@@ -100,7 +100,7 @@ See the [Render pilot guide](docs/render-pilot.md) and [code-protection notes](d
 
 The **Plans** view shows the intended customer journey without pretending that billing is finished. The current Free pilot is a protected, synthetic-data demonstration. Pro remains a roadmap concept. A founding Team pilot can open an approved hosted checkout, but payment still does not automatically activate application entitlements.
 
-If a payment or creator-support provider approves your account, configure its hosted HTTPS link rather than exposing bank details:
+If a payment or creator-support provider approves your account, configure its hosted HTTPS link for product checkout. The public support panel also displays developer-authorized direct-transfer recipient details; payer credentials are never collected by EvidenceDesk:
 
 ```dotenv
 EVIDENCEDESK_CHECKOUT_URL=https://your-store.example/checkout/buy/your-product

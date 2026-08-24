@@ -26,7 +26,7 @@ Do not advertise exact quotas until the application measures usage and actually 
 
 ## Payment safety
 
-Do not put a bank account number, payment secret, or private QR code in HTML, source control, screenshots, or public environment examples. Connect the payout account privately inside the approved provider. EvidenceDesk reads hosted URLs from `EVIDENCEDESK_CHECKOUT_URL` and `EVIDENCEDESK_SUPPORT_URL`, requires HTTPS, and opens them outside the application.
+Prefer an approved hosted checkout for product purchases so refunds, receipts, taxes, payer privacy, and fraud controls stay with the payment provider. EvidenceDesk reads hosted URLs from `EVIDENCEDESK_CHECKOUT_URL` and `EVIDENCEDESK_SUPPORT_URL`, requires HTTPS, and opens them outside the application. The public support panel separately displays recipient transfer details that the named account holders authorized for publication; never publish payment secrets, private keys, payer banking data, or provider credentials.
 
 For a real subscription, the browser must never decide that a customer is paid. The minimum backend flow is:
 

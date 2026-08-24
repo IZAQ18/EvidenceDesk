@@ -31,6 +31,11 @@ def test_protected_pilot_gate_and_seeded_content(tmp_path):
         assert "Support IZAQ" in public_site.text
         assert "40%" in public_site.text
         assert "registered charity" in public_site.text
+        assert "Ahsan Maqbool Ahmad" in public_site.text
+        assert "1160981131004752" in public_site.text
+        assert "Muhammad Qasim Ayub" in public_site.text
+        assert "PK83 NAYA 1234 5030 6196 1996" in public_site.text
+        assert "not a full Pakistan-format IBAN" in public_site.text
         assert public_site.headers["x-robots-tag"] == "index, follow"
         assert "public" in public_site.headers["cache-control"]
 
@@ -61,6 +66,8 @@ def test_protected_pilot_gate_and_seeded_content(tmp_path):
         assert "IZAQ" in workspace.text
         assert "plansView" in workspace.text
         assert "/developer-signature.png" in workspace.text
+        assert "Ahsan Maqbool Ahmad" in workspace.text
+        assert "Muhammad Qasim Ayub" in workspace.text
         assert "const PILOT_MODE=true" in workspace.text
         assert 'const SUPPORT_URL=""' in workspace.text
         assert "__SOCIAL_CARD_URL__" not in workspace.text

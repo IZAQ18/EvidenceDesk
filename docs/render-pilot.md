@@ -1,6 +1,6 @@
 # Protected Render pilot
 
-Render is the recommended no-cost test host for EvidenceDesk. Its free web service requires no payment, can build the existing Dockerfile from a private GitHub repository, and provides an `onrender.com` HTTPS address. The repository includes `render.yaml` so the settings remain reviewable without committing the access secret.
+Render is the closest no-cost test host for EvidenceDesk because its free web service can build the existing Dockerfile from a private GitHub repository and provides an `onrender.com` HTTPS address. Render may still require a credit card for account identity verification even when the Free instance type is selected; that verification is separate from choosing a paid service. The repository includes `render.yaml` so the settings remain reviewable without committing the access secret.
 
 ## Create the service
 
