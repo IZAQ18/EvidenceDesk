@@ -1,54 +1,29 @@
 from __future__ import annotations
 
 import re
+import time
 
-from app.models import AnswerResponse, Citation, Principal, WorkflowStep
-from app.repository import QUERY_EXPANSIONS, Repository, RetrievedChunk
-
-STOP_WORDS = {
-    "about", "after", "again", "also", "and", "are", "because", "been", "before", "being",
-    "can", "does", "for", "from", "have", "how", "into", "its", "not", "our", "that", "the",
-    "their", "then", "there", "these", "this", "those", "was", "what", "when", "where", "which",
-    "in", "is", "of", "to", "who", "will", "with", "would", "you", "your",
-}
+from app.models import AnswerResponse, Citation, Principal, RetrievalSummary, WorkflowStep
+from app.repository import Repository, RetrievedChunk
+from app.retrieval import expanded_query_terms, passage_relevance, terms
 
 
-def _terms(text: str) -> set[str]:
-    words = re.findall(r"[a-z0-9]{2,}", text.lower().replace("-", " "))
-    normalized: set[str] = set()
-    for word in words:
-        if word in STOP_WORDS:
-            continue
-        if word.endswith("ied") and len(word) > 4:
-            word = f"{word[:-3]}y"
-        elif word.endswith("ed") and len(word) > 4:
-            word = word[:-2]
-        elif word.endswith("ies") and len(word) > 4:
-            word = f"{word[:-3]}y"
-        elif word.endswith("s") and not word.endswith("ss") and len(word) > 3:
-            word = word[:-1]
-        normalized.add(word)
-    return normalized
-
-
-def _query_terms(text: str) -> set[str]:
-    exact = _terms(text)
-    expanded = set(exact)
-    for term in exact:
-        expanded.update(QUERY_EXPANSIONS.get(term, set()))
-    return expanded
-
-
-def _ranked_sentences(question: str, text: str) -> list[tuple[str, int]]:
-    query_terms = _query_terms(question)
+def _ranked_sentences(question: str, text: str) -> list[tuple[str, dict[str, float]]]:
     sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+|\n+", text) if part.strip()]
     if not sentences:
-        return [(text[:500], 0)]
+        passage = text[:600]
+        return [(passage, passage_relevance(question, passage))]
     ranked = sorted(
-        ((len(query_terms & _terms(sentence)), -index, sentence) for index, sentence in enumerate(sentences)),
+        (
+            (passage_relevance(question, sentence)["score"], -index, sentence)
+            for index, sentence in enumerate(sentences)
+        ),
         reverse=True,
     )
-    return [(sentence[:600], overlap) for overlap, _, sentence in ranked]
+    return [
+        (sentence[:600], passage_relevance(question, sentence[:600]))
+        for _, _, sentence in ranked
+    ]
 
 
 class AnswerWorkflow:
@@ -65,9 +40,28 @@ class AnswerWorkflow:
         document_ids: list[str] | None = None,
     ) -> AnswerResponse:
         trace: list[WorkflowStep] = []
-        chunks = self.repository.search(question, principal, top_k, document_ids)
+        started = time.perf_counter()
+        search = self.repository.hybrid_search(question, principal, top_k, document_ids)
+        chunks = search.chunks
+        duration_ms = round((time.perf_counter() - started) * 1_000, 2)
+        diagnostics = search.diagnostics
+        retrieval = RetrievalSummary(
+            mode=diagnostics.mode,
+            authorized_candidates=diagnostics.candidate_pool,
+            lexical_hits=diagnostics.lexical_hits,
+            semantic_hits=diagnostics.semantic_hits,
+            returned_chunks=diagnostics.returned_chunks,
+            best_semantic_score=diagnostics.best_semantic_score,
+            best_rerank_score=diagnostics.best_rerank_score,
+            duration_ms=duration_ms,
+        )
         trace.append(WorkflowStep(
-            name="retrieve", status="complete", detail=f"Found {len(chunks)} authorized evidence chunks."
+            name="hybrid_retrieve",
+            status="complete",
+            detail=(
+                f"Reviewed {diagnostics.candidate_pool} authorized candidates; keyword and local "
+                f"semantic scoring returned {len(chunks)} chunks."
+            ),
         ))
         if not chunks:
             trace.append(WorkflowStep(
@@ -80,23 +74,39 @@ class AnswerWorkflow:
                 workflow=trace,
                 evidence_quality="insufficient",
                 quality_reason="No authorized evidence chunks matched the question.",
+                retrieval=retrieval,
             )
 
-        candidates: list[tuple[RetrievedChunk, str, int]] = []
-        meaningful_terms = _terms(question)
+        candidates: list[tuple[RetrievedChunk, str, dict[str, float], float]] = []
+        meaningful_terms, expanded_question_terms = expanded_query_terms(question)
         minimum_overlap = 1 if len(meaningful_terms) <= 2 else 2
         for chunk in chunks:
-            for sentence, overlap in _ranked_sentences(question, chunk.text):
-                if overlap >= minimum_overlap:
-                    candidates.append((chunk, sentence, overlap))
-        candidates.sort(key=lambda item: (item[2], item[0].relevance_score), reverse=True)
-        deduplicated: list[tuple[RetrievedChunk, str, int]] = []
+            for sentence, sentence_metrics in _ranked_sentences(question, chunk.text):
+                exact_overlap = int(sentence_metrics["exact_overlap"])
+                expanded_overlap = int(sentence_metrics["expanded_overlap"])
+                semantic_support = sentence_metrics["semantic"]
+                if exact_overlap >= minimum_overlap or (
+                    expanded_overlap >= 1 and semantic_support >= 0.12
+                ):
+                    combined_score = sentence_metrics["score"] + chunk.relevance_score * 0.25
+                    candidates.append((chunk, sentence, sentence_metrics, combined_score))
+        candidates.sort(key=lambda item: item[3], reverse=True)
+        trace.append(
+            WorkflowStep(
+                name="rerank",
+                status="complete",
+                detail=(
+                    f"Rescored {len(candidates)} answer-bearing passages for direct coverage, "
+                    "semantic similarity, metadata, and question shape."
+                ),
+            )
+        )
+        deduplicated: list[tuple[RetrievedChunk, str, dict[str, float], float]] = []
         seen_sentences: set[str] = set()
         covered_query_terms: set[str] = set()
-        expanded_question_terms = _query_terms(question)
         for candidate in candidates:
             normalized = re.sub(r"\W+", " ", candidate[1].lower()).strip()
-            matched_terms = _terms(candidate[1]) & expanded_question_terms
+            matched_terms = terms(candidate[1]) & expanded_question_terms
             adds_question_detail = bool(matched_terms - covered_query_terms)
             if normalized and normalized not in seen_sentences and adds_question_detail:
                 deduplicated.append(candidate)
@@ -114,11 +124,12 @@ class AnswerWorkflow:
                 workflow=trace,
                 evidence_quality="insufficient",
                 quality_reason="Retrieved text did not overlap enough meaningful question terms.",
+                retrieval=retrieval,
             )
 
         citations: list[Citation] = []
         statements: list[str] = []
-        for number, (chunk, sentence, _) in enumerate(candidates, 1):
+        for number, (chunk, sentence, _, _) in enumerate(candidates, 1):
             citations.append(Citation(
                 number=number,
                 document_id=chunk.document_id,
@@ -130,13 +141,21 @@ class AnswerWorkflow:
                 page_number=chunk.page_number,
             ))
             statements.append(f"{sentence} [{number}]")
-        answer = " ".join(statements)
+        answer = (
+            f"The evidence states: {statements[0]}"
+            if len(statements) == 1
+            else "The strongest authorized evidence says:\n" + "\n".join(
+                f"- {statement}" for statement in statements
+            )
+        )
         trace.append(WorkflowStep(
             name="synthesize", status="complete", detail="Selected source sentences and attached citations."
         ))
 
         markers = {int(value) for value in re.findall(r"\[(\d+)]", answer)}
-        valid = markers == {citation.number for citation in citations}
+        valid = markers == {citation.number for citation in citations} and all(
+            citation.excerpt in answer for citation in citations
+        )
         trace.append(WorkflowStep(
             name="verify_citations",
             status="passed" if valid else "failed",
@@ -145,21 +164,26 @@ class AnswerWorkflow:
         if not valid:
             answer = "\n".join(f"- {citation.excerpt} [{citation.number}]" for citation in citations)
 
-        flagged = sum(chunk.injection_flag for chunk, _, _ in candidates)
+        flagged = sum(chunk.injection_flag for chunk, _, _, _ in candidates)
         warning = None
         if flagged:
             warning = (
                 f"{flagged} cited chunk(s) contained instruction-like language and were treated as untrusted data."
             )
-        best_overlap = max(overlap for _, _, overlap in candidates)
-        covered_terms = set().union(*(_terms(sentence) for _, sentence, _ in candidates))
+        best_exact_coverage = max(metrics["exact_coverage"] for _, _, metrics, _ in candidates)
+        best_semantic = max(metrics["semantic"] for _, _, metrics, _ in candidates)
+        covered_terms = set().union(*(terms(sentence) for _, sentence, _, _ in candidates))
         coverage = len(covered_terms & meaningful_terms) / max(1, len(meaningful_terms))
-        if best_overlap >= 3 and coverage >= 0.5:
+        if best_exact_coverage >= 0.5 and coverage >= 0.5:
             quality = "strong"
-            quality_reason = "Direct source sentences cover most of the meaningful question terms."
+            quality_reason = "Direct source passages cover most meaningful question terms and passed reranking."
         else:
             quality = "partial"
-            quality_reason = "Relevant evidence was found, but it covers only part of the question."
+            quality_reason = (
+                "Semantically relevant evidence was found, but direct wording covers only part of the question."
+                if best_semantic >= 0.12
+                else "Relevant evidence was found, but it covers only part of the question."
+            )
         return AnswerResponse(
             answer=answer,
             grounded=True,
@@ -168,4 +192,5 @@ class AnswerWorkflow:
             warning=warning,
             evidence_quality=quality,
             quality_reason=quality_reason,
+            retrieval=retrieval,
         )

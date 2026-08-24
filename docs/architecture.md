@@ -12,8 +12,8 @@ EvidenceDesk optimizes for traceable answers, access decisions before retrieval,
 4. **Ingestion:** stages an authorized upload, records a durable job, and returns immediately. A database-leased worker rechecks type, byte count, digest, and PDF signature; enforces page, OCR-page, and resolution limits; extracts embedded text; OCRs weak PDF pages when available; records extraction diagnostics; and atomically creates page-aware chunks and the searchable document. Failed jobs keep a safe explanation and can be retried within a configured attempt limit.
 5. **Original store:** writes each original behind a small storage interface. Local mode uses generated tenant/document paths, containment checks, fsync, and an atomic final rename. Optional S3 mode uses tenant-scoped keys, server-side AES-256 or KMS encryption, expected-owner checks, and authenticated application streaming; it never creates a public object URL.
 6. **Evidence store:** a dual adapter records documents, pages, chunks, conversations, messages, feedback, accounts, workspaces, sessions, and text-free audit events. SQLite keeps local setup portable. PostgreSQL uses versioned migrations protected by a transaction advisory lock and is exercised in CI against PostgreSQL 16.
-7. **Retrieval:** expands a small, controlled vocabulary of common organizational concepts, combines database full-text rank, exact query overlap, metadata signals, and a second relevance pass, and deduplicates repeated sentences. SQLite uses FTS5; PostgreSQL uses a GIN-backed `to_tsvector` index and native web-search queries.
-8. **Bounded answer workflow:** extracts supported statements, creates structured page citations, verifies every marker, labels evidence quality, and refuses when support is insufficient.
+7. **Retrieval:** first applies tenant, classification, lifecycle, and explicit document scope in SQL. It then combines database full-text results with a bounded authorized candidate pool scored by transparent local semantic feature vectors. Reciprocal rank fusion and a question-aware passage reranker reward direct term coverage, domain concepts, metadata, and answer shapes such as quantities or deadlines. SQLite uses FTS5; PostgreSQL uses a GIN-backed `to_tsvector` index and native web-search queries.
+8. **Bounded answer workflow:** selects supported source passages, creates structured page citations, verifies every marker and exact excerpt, labels evidence quality, and refuses when support is insufficient. No generative model is active in the free pilot.
 9. **Browser workspace:** combines account-aware onboarding, conversation history, explicit document scope, evidence inspection, original preview, library lifecycle tools, feedback, reports, and admin-only operational signals.
 
 ## Why these decisions
@@ -24,7 +24,9 @@ EvidenceDesk optimizes for traceable answers, access decisions before retrieval,
 - **Authorization in retrieval:** filtered chunks never enter synthesis, citation responses, preview endpoints, reports, or history.
 - **OCR only when needed:** OCR is expensive and imperfect, so the service first measures embedded text, then OCRs only weak pages within configured limits.
 - **Original and extraction side by side:** the user can compare a cited extract with its source page instead of trusting a detached answer.
-- **Honest hybrid retrieval:** local FTS, concept expansion, metadata, and reranking improve recall. This is not described as vector search or semantic embeddings.
+- **Honest hybrid retrieval:** the local sparse semantic vector encoder is deterministic,
+  dependency-free, and auditable. It improves familiar policy-language variation but is explicitly
+  not described as a pretrained neural embedding model.
 - **Optional OIDC boundary:** JWT validation is implemented, while identity-provider setup, group mapping, key rotation, and end-to-end acceptance remain deployment work.
 
 ## Data model
@@ -42,7 +44,9 @@ Archive removes a document from normal retrieval without destroying it. Permanen
 
 ## Known limitations
 
-- Controlled expansion only covers configured concepts; a pilot should evaluate embeddings and a reranker on an organization-specific test set.
+- Local semantic features cover configured organizational concepts. A paid pilot should compare
+  a selected neural embedding model and reranker on an organization-specific held-out set before
+  enabling them.
 - OCR depends on scan quality, language data, layout, and Tesseract; handwriting and complex tables remain difficult.
 - Browser ingestion is asynchronous and survives web-request timeouts through durable database
   jobs and expiring worker leases. The bundled worker still shares the web container; production

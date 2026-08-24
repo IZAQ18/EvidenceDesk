@@ -133,6 +133,17 @@ class WorkflowStep(BaseModel):
     detail: str
 
 
+class RetrievalSummary(BaseModel):
+    mode: str
+    authorized_candidates: int = 0
+    lexical_hits: int = 0
+    semantic_hits: int = 0
+    returned_chunks: int = 0
+    best_semantic_score: float = 0.0
+    best_rerank_score: float = 0.0
+    duration_ms: float = 0.0
+
+
 class AnswerResponse(BaseModel):
     answer: str
     grounded: bool
@@ -141,6 +152,7 @@ class AnswerResponse(BaseModel):
     warning: str | None = None
     evidence_quality: Literal["strong", "partial", "insufficient"] = "insufficient"
     quality_reason: str = "No direct evidence was available."
+    retrieval: RetrievalSummary | None = None
     conversation_id: str | None = None
     message_id: str | None = None
 

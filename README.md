@@ -13,8 +13,11 @@ This is an intentionally honest portfolio MVP. It runs locally and demonstrates 
   ready, and failed states; bounded retries; staged-file integrity checks; and expired-worker
   lease recovery.
 - Original-file and extracted-page preview with highlighted cited passages.
-- Controlled query expansion, FTS5 ranking, metadata signals, and a second relevance pass.
+- Authorization-first hybrid retrieval combining database full-text search with deterministic,
+  auditable local semantic feature vectors, reciprocal rank fusion, and a question-aware reranker.
 - Strong, partial, or insufficient evidence labels with an explanation.
+- Per-answer retrieval diagnostics and text-free admin quality metrics: authorized candidate
+  count, lexical/semantic hits, rerank strength, refusal count, and retrieval latency.
 - Explicit document scope, collections, versions, effective/expiry dates, supersession, archive/restore, and bulk actions.
 - Persistent conversations, follow-up questions, per-answer feedback, and Markdown report export.
 - Tenant and classification filtering before retrieval; role checks for administration; ownership checks for conversation data.
@@ -58,7 +61,12 @@ FastAPI ──► identity + tenant/classification/role policy
                                       └→ refuse when evidence is weak
 ```
 
-The agent-like workflow is deliberately bounded. Retrieval, synthesis, and citation verification add value; open-ended tools and uncontrolled loops do not. SQLite FTS5 keeps the local demo portable. Controlled concept expansion improves common policy-language matches, but it is not an embedding model. See [architecture](docs/architecture.md), [delivery plan](docs/delivery-plan.md), [threat model](docs/threat-model.md), and [AWS path](docs/aws-deployment.md).
+The agent-like workflow is deliberately bounded. Hybrid retrieval, passage reranking, extractive
+synthesis, and citation verification add value; open-ended tools and uncontrolled loops do not.
+SQLite FTS5 keeps the local demo portable. The local semantic encoder uses transparent sparse
+policy features rather than a pretrained neural embedding model. See [architecture](docs/architecture.md),
+[evaluation](docs/evaluation.md), [delivery plan](docs/delivery-plan.md), [threat model](docs/threat-model.md),
+and [AWS path](docs/aws-deployment.md).
 
 The browser queues uploads through `/v1/ingestion-jobs` and polls the durable job record. The
 legacy `/v1/documents` upload remains synchronous for API compatibility. The bundled worker is
@@ -243,6 +251,17 @@ curl -X POST http://localhost:8000/v1/answers \
 ```
 
 Every answer includes `grounded`, `evidence_quality`, `quality_reason`, structured citations, and a workflow trace containing step names rather than private model reasoning.
+
+Run the real synthetic answer-quality benchmark with:
+
+```bash
+python -m app.evaluation
+```
+
+It currently contains eight regression cases and reports retrieval, citation, refusal,
+security-boundary, and p95 latency measurements. A perfect result on this small synthetic set is
+not represented as customer accuracy or large-scale production evidence; see the
+[evaluation interpretation](docs/evaluation.md).
 
 ## Verify it
 

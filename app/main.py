@@ -143,7 +143,11 @@ def _seed_demo_documents(
 def create_app(settings: Settings | None = None) -> FastAPI:
     resolved_settings = settings or get_settings()
     database = build_database(resolved_settings)
-    repository = Repository(database)
+    repository = Repository(
+        database,
+        semantic_candidate_limit=resolved_settings.semantic_candidate_limit,
+        semantic_min_score=resolved_settings.semantic_min_score,
+    )
     storage = build_document_storage(resolved_settings)
     workflow = AnswerWorkflow(repository)
     account_store = AccountStore(database, resolved_settings.account_session_hours)
@@ -444,7 +448,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "supported_files": [".txt", ".md", ".pdf"],
             "max_upload_bytes": resolved_settings.max_upload_bytes,
             "max_pdf_pages": resolved_settings.max_pdf_pages,
-            "answer_mode": "hybrid-extractive-citation-verified",
+            "answer_mode": "hybrid-semantic-extractive-citation-verified",
+            "retrieval": {
+                "mode": "authorized-keyword-plus-local-semantic",
+                "encoder": "deterministic-auditable-policy-feature-vectors",
+                "neural_embeddings": False,
+                "candidate_limit": resolved_settings.semantic_candidate_limit,
+                "reranking": True,
+            },
             "auth_mode": resolved_settings.auth_mode,
             "features": [
                 "page-evidence",
@@ -455,6 +466,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "versions",
                 "reports",
                 "durable-ingestion-jobs",
+                "hybrid-semantic-retrieval",
+                "evidence-reranking",
+                "retrieval-quality-metrics",
             ],
         }
 
@@ -818,6 +832,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             [citation.model_dump(mode="json") for citation in result.citations],
             [step.model_dump(mode="json") for step in result.workflow],
         )
+        if result.retrieval:
+            repository.record_answer_diagnostics(
+                principal, message_id, result.retrieval, result.grounded
+            )
         result.conversation_id = conversation_id
         result.message_id = message_id
         repository.audit(

@@ -43,14 +43,15 @@ def test_postgres_accounts_ingestion_retrieval_and_tenant_isolation(tmp_path):
         with database.connect() as connection:
             connection.execute(
                 """TRUNCATE auth_sessions, workspace_members, workspaces, users,
-                          payment_events, audit_events, feedback, messages, conversations,
+                          payment_events, audit_events, feedback, answer_diagnostics,
+                          messages, conversations,
                           ingestion_jobs, document_pages, chunks, documents
                           RESTART IDENTITY CASCADE"""
             )
             versions = connection.execute(
                 "SELECT version FROM schema_migrations ORDER BY version"
             ).fetchall()
-        assert [row["version"] for row in versions] == [1, 2]
+        assert [row["version"] for row in versions] == [1, 2, 3]
 
         first = _register(client, "FIRST@example.com", "First Team")
         uploaded = client.post(
@@ -90,6 +91,10 @@ def test_postgres_accounts_ingestion_retrieval_and_tenant_isolation(tmp_path):
         assert result["grounded"] is True
         assert result["citations"][0]["document_id"] == document["id"]
         assert "twenty" in result["answer"].lower()
+        assert result["retrieval"]["semantic_hits"] >= 1
+        quality_metrics = client.get("/v1/admin/metrics").json()["retrieval"]
+        assert quality_metrics["queries"] == 1
+        assert quality_metrics["avg_best_rerank_score"] > 0
         assert client.get(f"/v1/documents/{document['id']}/content").content.startswith(
             b"Employees receive twenty"
         )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
@@ -9,22 +10,15 @@ from uuid import uuid4
 from app.config import Classification
 from app.db import DatabaseLike
 from app.ingestion import ExtractedDocument, TextChunk, has_injection_language
-from app.models import Principal
+from app.models import Principal, RetrievalSummary
 from app.payments import PaymentEvent
-
-QUERY_EXPANSIONS: dict[str, set[str]] = {
-    "vacation": {"leave", "holiday", "absence"},
-    "holiday": {"leave", "vacation"},
-    "pto": {"leave", "vacation", "absence"},
-    "leave": {"vacation", "absence", "holiday"},
-    "complaint": {"report", "concern", "violation", "misconduct"},
-    "misconduct": {"violation", "complaint", "ethics"},
-    "report": {"notify", "disclose", "complaint"},
-    "fire": {"terminate", "termination", "dismissal"},
-    "salary": {"pay", "compensation", "wage"},
-    "remote": {"hybrid", "telework", "home"},
-    "privacy": {"confidential", "personal", "data"},
-}
+from app.retrieval import (
+    STOP_WORDS,
+    expanded_query_terms,
+    passage_relevance,
+    semantic_similarity,
+    terms,
+)
 
 
 @dataclass(frozen=True)
@@ -39,6 +33,26 @@ class RetrievedChunk:
     relevance_score: float
     injection_flag: bool
     page_number: int | None
+    lexical_score: float = 0.0
+    semantic_score: float = 0.0
+    rerank_score: float = 0.0
+
+
+@dataclass(frozen=True)
+class SearchDiagnostics:
+    mode: str
+    candidate_pool: int
+    lexical_hits: int
+    semantic_hits: int
+    returned_chunks: int
+    best_semantic_score: float
+    best_rerank_score: float
+
+
+@dataclass(frozen=True)
+class HybridSearchResult:
+    chunks: list[RetrievedChunk]
+    diagnostics: SearchDiagnostics
 
 
 class DuplicateDocumentError(Exception):
@@ -49,21 +63,17 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _terms(text: str) -> set[str]:
-    return set(re.findall(r"[\w-]{2,}", text.lower()))
-
-
-def _expanded_terms(question: str) -> tuple[list[str], set[str]]:
-    exact = _terms(question)
-    expanded = set(exact)
-    for term in exact:
-        expanded.update(QUERY_EXPANSIONS.get(term, set()))
-    return list(dict.fromkeys([*exact, *sorted(expanded - exact)]))[:30], exact
-
-
 class Repository:
-    def __init__(self, database: DatabaseLike):
+    def __init__(
+        self,
+        database: DatabaseLike,
+        *,
+        semantic_candidate_limit: int = 600,
+        semantic_min_score: float = 0.08,
+    ):
         self.database = database
+        self.semantic_candidate_limit = semantic_candidate_limit
+        self.semantic_min_score = semantic_min_score
 
     def audit(
         self,
@@ -464,9 +474,27 @@ class Repository:
         top_k: int,
         document_ids: list[str] | None = None,
     ) -> list[RetrievedChunk]:
-        terms, exact_terms = _expanded_terms(question)
-        if not terms:
-            return []
+        return self.hybrid_search(question, principal, top_k, document_ids).chunks
+
+    def hybrid_search(
+        self,
+        question: str,
+        principal: Principal,
+        top_k: int,
+        document_ids: list[str] | None = None,
+    ) -> HybridSearchResult:
+        exact_terms, expanded_set = expanded_query_terms(question)
+        empty_diagnostics = SearchDiagnostics(
+            mode="authorized-keyword-plus-local-semantic",
+            candidate_pool=0,
+            lexical_hits=0,
+            semantic_hits=0,
+            returned_chunks=0,
+            best_semantic_score=0.0,
+            best_rerank_score=0.0,
+        )
+        if not exact_terms:
+            return HybridSearchResult([], empty_diagnostics)
         placeholders = ",".join("?" for _ in principal.clearances)
         scope_clause = ""
         scope_parameters: tuple[str, ...] = ()
@@ -475,7 +503,21 @@ class Repository:
             scope_clause = f"AND c.document_id IN ({scope_placeholders})"
             scope_parameters = tuple(document_ids)
         candidate_limit = max(top_k * 6, 24)
-        fts_query = " OR ".join(f'"{term.replace(chr(34), "")}"' for term in terms)
+        raw_query_terms = {
+            word
+            for word in re.findall(r"[a-z0-9][a-z0-9'-]+", question.lower())
+            if word not in STOP_WORDS
+        }
+        lexical_terms = list(
+            dict.fromkeys(
+                [
+                    *sorted(raw_query_terms),
+                    *sorted(exact_terms),
+                    *sorted(expanded_set - exact_terms),
+                ]
+            )
+        )[:30]
+        fts_query = " OR ".join(f'"{term.replace(chr(34), "")}"' for term in lexical_terms)
         if self.database.dialect == "postgres":
             query = f"""SELECT c.id AS chunk_id, c.document_id, d.filename, d.source,
                                c.classification, c.text, c.injection_flag, c.page_number,
@@ -516,30 +558,104 @@ class Repository:
                 *scope_parameters,
                 candidate_limit,
             )
+        semantic_query = f"""SELECT c.id AS chunk_id, c.document_id, d.filename, d.source,
+                                    c.classification, c.text, c.injection_flag, c.page_number,
+                                    0.0 AS score
+                             FROM chunks c JOIN documents d ON d.id = c.document_id
+                             WHERE c.tenant_id = ?
+                               AND c.classification IN ({placeholders})
+                               AND d.status = 'active' {scope_clause}
+                             ORDER BY d.created_at DESC, c.chunk_index ASC LIMIT ?"""  # noqa: S608
+        semantic_parameters = (
+            principal.tenant_id,
+            *principal.clearances,
+            *scope_parameters,
+            self.semantic_candidate_limit,
+        )
         with self.database.connect() as connection:
-            rows = connection.execute(query, parameters).fetchall()
+            lexical_rows = connection.execute(query, parameters).fetchall()
+            semantic_rows = connection.execute(
+                semantic_query, semantic_parameters
+            ).fetchall()
 
-        expanded_set = set(terms)
+        lexical_rank = {row["chunk_id"]: rank for rank, row in enumerate(lexical_rows)}
+        semantic_scored = sorted(
+            (
+                (semantic_similarity(question, row["text"]), row)
+                for row in semantic_rows
+            ),
+            key=lambda item: item[0],
+            reverse=True,
+        )
+        semantic_rank = {
+            row["chunk_id"]: rank
+            for rank, (score, row) in enumerate(semantic_scored)
+            if score >= self.semantic_min_score
+        }
+        combined: dict[int, dict] = {row["chunk_id"]: dict(row) for row in lexical_rows}
+        for score, row in semantic_scored:
+            row_terms = terms(row["text"])
+            if score < self.semantic_min_score and not (exact_terms & row_terms):
+                continue
+            combined.setdefault(row["chunk_id"], dict(row))
+
         ranked: list[RetrievedChunk] = []
-        for rank, row in enumerate(rows):
-            row_data = dict(row)
-            text_terms = _terms(row_data["text"])
+        for chunk_id, row_data in combined.items():
+            text_terms = terms(row_data["text"])
             exact_overlap = len(exact_terms & text_terms)
-            expanded_overlap = len(expanded_set & text_terms) - exact_overlap
-            metadata_terms = _terms(f"{row_data['filename']} {row_data['source'] or ''}")
-            metadata_overlap = len(exact_terms & metadata_terms)
+            expanded_overlap = len((expanded_set - exact_terms) & text_terms)
+            metadata = f"{row_data['filename']} {row_data['source'] or ''}"
+            metadata_overlap = len(exact_terms & terms(metadata))
             phrase_boost = 0.35 if question.lower().strip() in row_data["text"].lower() else 0.0
+            semantic_score = semantic_similarity(question, row_data["text"])
+            rerank = passage_relevance(question, row_data["text"], metadata)
+            lexical_fusion = (
+                0.9 / (lexical_rank[chunk_id] + 1) if chunk_id in lexical_rank else 0.0
+            )
+            semantic_fusion = (
+                0.7 / (semantic_rank[chunk_id] + 1) if chunk_id in semantic_rank else 0.0
+            )
+            lexical_score = exact_overlap + expanded_overlap * 0.35 + metadata_overlap * 0.25
             relevance = (
-                exact_overlap * 1.0
-                + max(0, expanded_overlap) * 0.35
-                + metadata_overlap * 0.25
+                rerank["score"]
+                + lexical_fusion
+                + semantic_fusion
                 + phrase_boost
-                + 1 / (rank + 2)
             )
             row_data["injection_flag"] = bool(row_data["injection_flag"])
-            ranked.append(RetrievedChunk(**row_data, relevance_score=round(relevance, 4)))
+            ranked.append(
+                RetrievedChunk(
+                    **row_data,
+                    relevance_score=round(relevance, 4),
+                    lexical_score=round(lexical_score, 4),
+                    semantic_score=round(semantic_score, 4),
+                    rerank_score=round(rerank["score"], 4),
+                )
+            )
         ranked.sort(key=lambda item: item.relevance_score, reverse=True)
-        return ranked[:top_k]
+        selected: list[RetrievedChunk] = []
+        seen_text: set[str] = set()
+        page_counts: Counter[tuple[str, int | None]] = Counter()
+        for chunk in ranked:
+            normalized = re.sub(r"\W+", " ", chunk.text.lower()).strip()
+            page_key = (chunk.document_id, chunk.page_number)
+            if not normalized or normalized in seen_text or page_counts[page_key] >= 3:
+                continue
+            selected.append(chunk)
+            seen_text.add(normalized)
+            page_counts[page_key] += 1
+            if len(selected) == top_k:
+                break
+        diagnostics = SearchDiagnostics(
+            mode="authorized-keyword-plus-local-semantic",
+            candidate_pool=len(semantic_rows),
+            lexical_hits=len(lexical_rows),
+            semantic_hits=len(semantic_rank),
+            returned_chunks=len(selected),
+            best_semantic_score=max((item.semantic_score for item in selected), default=0.0),
+            best_rerank_score=max((item.rerank_score for item in selected), default=0.0),
+        )
+        return HybridSearchResult(selected, diagnostics)
 
     def create_or_get_conversation(
         self, principal: Principal, question: str, conversation_id: str | None
@@ -716,6 +832,36 @@ class Repository:
         data["citations"] = json.loads(data["citations_json"])
         return data
 
+    def record_answer_diagnostics(
+        self,
+        principal: Principal,
+        message_id: str,
+        retrieval: RetrievalSummary,
+        grounded: bool,
+    ) -> None:
+        with self.database.connect() as connection:
+            connection.execute(
+                """INSERT INTO answer_diagnostics
+                   (message_id, tenant_id, retrieval_mode, authorized_candidates,
+                    lexical_hits, semantic_hits, returned_chunks, best_semantic_score,
+                    best_rerank_score, duration_ms, grounded, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    message_id,
+                    principal.tenant_id,
+                    retrieval.mode,
+                    retrieval.authorized_candidates,
+                    retrieval.lexical_hits,
+                    retrieval.semantic_hits,
+                    retrieval.returned_chunks,
+                    retrieval.best_semantic_score,
+                    retrieval.best_rerank_score,
+                    retrieval.duration_ms,
+                    int(grounded),
+                    _now(),
+                ),
+            )
+
     def admin_metrics(self, principal: Principal) -> dict:
         with self.database.connect() as connection:
             documents = connection.execute(
@@ -759,10 +905,24 @@ class Repository:
                    GROUP BY currency""",
                 (principal.tenant_id,),
             ).fetchall()
+            retrieval = connection.execute(
+                """SELECT COUNT(*) queries,
+                          COALESCE(AVG(authorized_candidates), 0) avg_authorized_candidates,
+                          COALESCE(AVG(lexical_hits), 0) avg_lexical_hits,
+                          COALESCE(AVG(semantic_hits), 0) avg_semantic_hits,
+                          COALESCE(AVG(returned_chunks), 0) avg_returned_chunks,
+                          COALESCE(AVG(best_semantic_score), 0) avg_best_semantic_score,
+                          COALESCE(AVG(best_rerank_score), 0) avg_best_rerank_score,
+                          COALESCE(AVG(duration_ms), 0) avg_duration_ms,
+                          COALESCE(SUM(CASE WHEN grounded=0 THEN 1 ELSE 0 END), 0) refusals
+                   FROM answer_diagnostics WHERE tenant_id = ?""",
+                (principal.tenant_id,),
+            ).fetchone()
         return {
             "documents": dict(documents),
             "answers": dict(answers),
             "feedback": {row["category"]: row["count"] for row in feedback_rows},
+            "retrieval": dict(retrieval),
             "recent_audit": [
                 {**dict(row), "detail": json.loads(row["detail_json"])} for row in recent_audit
             ],

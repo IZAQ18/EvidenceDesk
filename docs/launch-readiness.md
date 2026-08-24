@@ -16,7 +16,7 @@ the organization has not supplied enough information.
 | Account safety | Individual sign-in, revocable sessions, CSRF protection, tenant isolation | Foundation implemented; email verification and recovery pending |
 | Durable data | Managed PostgreSQL, private object storage, backups, restore exercise | PostgreSQL adapter/migrations and private S3 adapter implemented; PostgreSQL 16 path tested in CI. AWS integration, pooling, backups, and restore exercise pending |
 | Ingestion | Async processing, malware scan, progress, resilient OCR and table handling | Durable jobs, visible progress, bounded retry, integrity verification, and lease recovery implemented; isolated workers, malware scanning, and advanced table extraction pending |
-| Answer quality | Organization-specific gold set, >=95% retrieval success, >=98% valid citations | Evaluation harness exists; benchmark expansion pending |
+| Answer quality | Organization-specific gold set, >=95% retrieval success, >=98% valid citations | Hybrid local semantic retrieval, reranking, diagnostics, and an 8-case synthetic regression benchmark implemented; customer-specific held-out evaluation pending |
 | Customer AI | Server-managed provider, quotas, cost controls, no customer key required | Pending |
 | Billing | Hosted checkout, verified webhooks, entitlements, portal, cancellation, refunds | Verified event intake exists; entitlements pending |
 | User control | Export, document deletion, conversation deletion, complete account deletion | Partial; account deletion pending |
@@ -71,3 +71,20 @@ The document upload path now provides:
 This closes the request-timeout and invisible-progress gap for the MVP. It does not claim that
 the in-process worker is a production quarantine system. Malware scanning, parser isolation,
 SQS/ECS worker deployment, job observability, and dead-letter operations remain launch gates.
+
+## Milestone 3 evidence
+
+The answer-intelligence path now provides:
+
+- authorization-first candidate selection before any semantic scoring;
+- deterministic local semantic feature vectors combined with SQLite/PostgreSQL full-text search;
+- reciprocal rank fusion and question-aware passage reranking;
+- clearer extractive answers whose citation markers and exact excerpts are verified;
+- per-answer retrieval diagnostics stored without question or document text;
+- an admin summary of semantic hits, candidate volume, latency, and refusals; and
+- an executable eight-case synthetic benchmark enforced in CI.
+
+The local benchmark currently passes all eight cases. This is regression evidence for that small
+synthetic corpus, not a claim of 100% customer accuracy. No generative model or pretrained neural
+embedding provider is active in the free pilot. Those require provider selection, privacy terms,
+cost controls, adversarial evaluation, and a customer-specific held-out benchmark.

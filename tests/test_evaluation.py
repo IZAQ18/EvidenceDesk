@@ -27,6 +27,10 @@ def test_answer_is_grounded_and_citations_resolve(client):
         assert citation["excerpt"] in result["answer"]
     assert result["workflow"][-1]["name"] == "verify_citations"
     assert result["workflow"][-1]["status"] == "passed"
+    assert result["workflow"][0]["name"] == "hybrid_retrieve"
+    assert any(step["name"] == "rerank" for step in result["workflow"])
+    assert result["retrieval"]["mode"] == "authorized-keyword-plus-local-semantic"
+    assert result["retrieval"]["best_rerank_score"] > 0
 
 
 def test_unknown_answer_refuses_without_citations(client):
@@ -115,3 +119,67 @@ def test_question_can_be_scoped_to_selected_documents(client):
     assert "twelve paid weeks" in result["answer"].lower()
     assert "twenty paid weeks" not in result["answer"].lower()
     assert {citation["document_id"] for citation in result["citations"]} == {first["id"]}
+
+
+def test_semantic_retrieval_matches_work_from_home_to_remote_language(client):
+    created = ingest(
+        client,
+        "Team members may perform their duties remotely for up to three days each week when "
+        "approved by their supervisor.",
+        name="flexible-work-policy.txt",
+    ).json()
+    response = client.post(
+        "/v1/answers",
+        headers=auth(),
+        json={"question": "Can employees work from home and how often?"},
+    )
+    assert response.status_code == 200
+    result = response.json()
+    assert result["grounded"] is True
+    assert "three days each week" in result["answer"].lower()
+    assert result["citations"][0]["document_id"] == created["id"]
+    assert result["retrieval"]["semantic_hits"] >= 1
+
+
+def test_reranker_prefers_passage_that_answers_requested_quantity(client):
+    ingest(
+        client,
+        "The annual leave program is administered by People Operations and applies to employees.",
+        name="leave-overview.txt",
+    )
+    detailed = ingest(
+        client,
+        "Eligible employees receive twenty paid annual leave days during each calendar year.",
+        name="leave-entitlement.txt",
+    ).json()
+    result = client.post(
+        "/v1/answers",
+        headers=auth(),
+        json={"question": "How many annual leave days do eligible employees receive?"},
+    ).json()
+    assert result["grounded"] is True
+    assert "twenty paid annual leave days" in result["answer"].lower()
+    assert result["citations"][0]["document_id"] == detailed["id"]
+
+
+def test_search_diagnostics_store_scores_without_question_text(client):
+    ingest(
+        client,
+        "Expense claims require an itemized receipt and manager approval within thirty days.",
+    )
+    client.post(
+        "/v1/answers",
+        headers=auth(),
+        json={"question": "When must a reimbursement claim be filed?"},
+    )
+    metrics = client.get("/v1/admin/metrics", headers=auth()).json()
+    assert metrics["retrieval"]["queries"] == 1
+    assert metrics["retrieval"]["avg_authorized_candidates"] >= 1
+    assert metrics["retrieval"]["avg_duration_ms"] >= 0
+    with client.app.state.repository.database.connect() as connection:
+        columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(answer_diagnostics)").fetchall()
+        }
+    assert "question" not in columns
+    assert "document_text" not in columns

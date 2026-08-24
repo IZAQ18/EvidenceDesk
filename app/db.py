@@ -207,6 +207,23 @@ CREATE INDEX IF NOT EXISTS idx_ingestion_jobs_queue
     ON ingestion_jobs(status, lease_expires_at, created_at);
 CREATE INDEX IF NOT EXISTS idx_ingestion_jobs_tenant
     ON ingestion_jobs(tenant_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS answer_diagnostics (
+    message_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    tenant_id TEXT NOT NULL,
+    retrieval_mode TEXT NOT NULL,
+    authorized_candidates INTEGER NOT NULL DEFAULT 0,
+    lexical_hits INTEGER NOT NULL DEFAULT 0,
+    semantic_hits INTEGER NOT NULL DEFAULT 0,
+    returned_chunks INTEGER NOT NULL DEFAULT 0,
+    best_semantic_score REAL NOT NULL DEFAULT 0,
+    best_rerank_score REAL NOT NULL DEFAULT 0,
+    duration_ms REAL NOT NULL DEFAULT 0,
+    grounded INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_answer_diagnostics_tenant
+    ON answer_diagnostics(tenant_id, created_at DESC);
 """
 
 POSTGRES_MIGRATIONS: tuple[tuple[int, tuple[str, ...]], ...] = (
@@ -396,6 +413,27 @@ POSTGRES_MIGRATIONS: tuple[tuple[int, tuple[str, ...]], ...] = (
                ON ingestion_jobs(status, lease_expires_at, created_at)""",
             """CREATE INDEX IF NOT EXISTS idx_ingestion_jobs_tenant
                ON ingestion_jobs(tenant_id, created_at DESC)""",
+        ),
+    ),
+    (
+        3,
+        (
+            """CREATE TABLE IF NOT EXISTS answer_diagnostics (
+                message_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+                tenant_id TEXT NOT NULL,
+                retrieval_mode TEXT NOT NULL,
+                authorized_candidates INTEGER NOT NULL DEFAULT 0,
+                lexical_hits INTEGER NOT NULL DEFAULT 0,
+                semantic_hits INTEGER NOT NULL DEFAULT 0,
+                returned_chunks INTEGER NOT NULL DEFAULT 0,
+                best_semantic_score DOUBLE PRECISION NOT NULL DEFAULT 0,
+                best_rerank_score DOUBLE PRECISION NOT NULL DEFAULT 0,
+                duration_ms DOUBLE PRECISION NOT NULL DEFAULT 0,
+                grounded INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            )""",
+            """CREATE INDEX IF NOT EXISTS idx_answer_diagnostics_tenant
+               ON answer_diagnostics(tenant_id, created_at DESC)""",
         ),
     ),
 )

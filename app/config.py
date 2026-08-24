@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     ingestion_job_max_attempts: int = Field(default=3, ge=1, le=10)
     rate_limit_per_minute: int = Field(default=60, ge=1, le=10_000)
     max_chunks_per_document: int = Field(default=2_000, ge=1, le=20_000)
+    semantic_candidate_limit: int = Field(default=600, ge=50, le=5_000)
+    semantic_min_score: float = Field(default=0.08, ge=0.0, le=1.0)
     max_pdf_pages: int = Field(default=100, ge=1, le=500)
     ocr_enabled: bool = True
     ocr_languages: str = Field(default="eng", pattern=r"^[a-zA-Z0-9_+.-]+$")

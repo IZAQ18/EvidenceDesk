@@ -84,7 +84,8 @@ def test_capabilities_are_exposed_to_authenticated_users(client):
     response = client.get("/v1/capabilities", headers=auth())
     assert response.status_code == 200
     result = response.json()
-    assert result["answer_mode"] == "hybrid-extractive-citation-verified"
+    assert result["answer_mode"] == "hybrid-semantic-extractive-citation-verified"
+    assert result["retrieval"]["neural_embeddings"] is False
     assert result["ocr"]["engine"] == "PyMuPDF + Tesseract"
     assert ".pdf" in result["supported_files"]
     assert "conversations" in result["features"]
