@@ -6,7 +6,7 @@ EvidenceDesk is a secure, citation-first knowledge assistant for organizational 
 
 This is an intentionally honest portfolio MVP. It runs locally and demonstrates production-minded design, but it is **not** represented as GovCloud-ready, compliance-certified, or proven at large scale.
 
-## What v0.6 includes
+## What v0.7 includes
 
 - Page-aware PDF extraction with bounded OCR fallback for weak pages.
 - Original-file and extracted-page preview with highlighted cited passages.
@@ -22,7 +22,8 @@ This is an intentionally honest portfolio MVP. It runs locally and demonstrates 
 - A replayable cinematic intro with an IZAQ maker reveal, progress counter, skip control, mobile composition, and reduced-motion fallback.
 - Aurora, Cobalt, and Ember accent palettes, interactive pointer light, spectrum navigation, and more expressive verified-evidence states.
 - An IZAQ portrait signature across the access gate, cinematic intro, header, and product rail.
-- A clearly labeled freemium product preview with Free, planned Pro, planned Team, and a provider-hosted support link. Billing and quotas are not active yet.
+- A clearly labeled freemium product preview with Free, planned Pro, a founding Team pilot, and provider-hosted checkout/support links.
+- Lemon Squeezy-compatible HMAC webhook verification, idempotent payment-event storage, masked customer hints, and admin-only payment notifications. Paid feature entitlements are not active yet.
 - Docker, GitHub Actions CI, evaluation/security tests, and a concrete path to standard AWS.
 
 ## Architecture at a glance
@@ -95,15 +96,17 @@ See the [Render pilot guide](docs/render-pilot.md) and [code-protection notes](d
 
 ### Freemium and revenue preview
 
-The **Plans** view shows the intended customer journey without pretending that checkout is finished. The current Free pilot is a protected, synthetic-data demonstration. Pro and Team are roadmap concepts; clicking them does not activate an entitlement or take payment.
+The **Plans** view shows the intended customer journey without pretending that billing is finished. The current Free pilot is a protected, synthetic-data demonstration. Pro remains a roadmap concept. A founding Team pilot can open an approved hosted checkout, but payment still does not automatically activate application entitlements.
 
 If a payment or creator-support provider approves your account, configure its hosted HTTPS link rather than exposing bank details:
 
 ```dotenv
-EVIDENCEDESK_SUPPORT_URL=https://your-provider.example/your-checkout
+EVIDENCEDESK_CHECKOUT_URL=https://your-store.example/checkout/buy/your-product
+EVIDENCEDESK_SUPPORT_URL=https://your-provider.example/your-support-page
+EVIDENCEDESK_PAYMENT_WEBHOOK_SECRET=generated-in-the-provider-dashboard
 ```
 
-The safest first commercial offer is a **founding team pilot**: one organization pays for controlled onboarding, an agreed synthetic/non-sensitive evaluation, and a clear success report. Subscription checkout should follow only after durable storage, accounts, usage metering, entitlements, terms, privacy, refunds, and webhook verification exist. See the [monetization plan](docs/monetization.md).
+The webhook endpoint is `/v1/payments/webhook`. It verifies the provider signature before storing a minimal event and never receives card or MCB account details. The safest first commercial offer is a **founding team pilot**: one organization pays for controlled onboarding, an agreed synthetic/non-sensitive evaluation, and a clear success report. Subscription checkout should follow only after durable storage, accounts, usage metering, entitlements, terms, privacy, and refunds exist. See the [monetization plan](docs/monetization.md).
 
 ## A simple demo
 

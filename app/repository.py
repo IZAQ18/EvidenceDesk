@@ -11,6 +11,7 @@ from app.config import Classification
 from app.db import Database
 from app.ingestion import ExtractedDocument, TextChunk, has_injection_language
 from app.models import Principal
+from app.payments import PaymentEvent
 
 QUERY_EXPANSIONS: dict[str, set[str]] = {
     "vacation": {"leave", "holiday", "absence"},
@@ -506,6 +507,21 @@ class Repository:
                    FROM audit_events WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 25""",
                 (principal.tenant_id,),
             ).fetchall()
+            payment_rows = connection.execute(
+                """SELECT event_name, provider_id, status, amount_minor, currency,
+                          customer_hint, test_mode, created_at
+                   FROM payment_events WHERE tenant_id = ?
+                   ORDER BY created_at DESC LIMIT 20""",
+                (principal.tenant_id,),
+            ).fetchall()
+            payment_totals = connection.execute(
+                """SELECT currency, COALESCE(SUM(amount_minor), 0) amount_minor,
+                          COUNT(*) payment_count
+                   FROM payment_events
+                   WHERE tenant_id = ? AND event_name = 'order_created' AND test_mode = 0
+                   GROUP BY currency""",
+                (principal.tenant_id,),
+            ).fetchall()
         return {
             "documents": dict(documents),
             "answers": dict(answers),
@@ -513,4 +529,33 @@ class Repository:
             "recent_audit": [
                 {**dict(row), "detail": json.loads(row["detail_json"])} for row in recent_audit
             ],
+            "payments": {
+                "totals": [dict(row) for row in payment_totals],
+                "recent": [dict(row) for row in payment_rows],
+            },
         }
+
+    def record_payment_event(
+        self, event: PaymentEvent, *, tenant_id: str, provider: str = "lemonsqueezy"
+    ) -> bool:
+        with self.database.connect() as connection:
+            cursor = connection.execute(
+                """INSERT OR IGNORE INTO payment_events(
+                       event_key, tenant_id, provider, event_name, provider_id, status,
+                       amount_minor, currency, customer_hint, test_mode, created_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    event.event_key,
+                    tenant_id,
+                    provider,
+                    event.event_name,
+                    event.provider_id,
+                    event.status,
+                    event.amount_minor,
+                    event.currency,
+                    event.customer_hint,
+                    int(event.test_mode),
+                    _now(),
+                ),
+            )
+            return cursor.rowcount == 1

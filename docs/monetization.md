@@ -26,7 +26,7 @@ Do not advertise exact quotas until the application measures usage and actually 
 
 ## Payment safety
 
-Do not put a bank account number, payment secret, or private QR code in HTML, source control, screenshots, or public environment examples. Use an approved provider-hosted checkout URL. EvidenceDesk reads that URL from `EVIDENCEDESK_SUPPORT_URL`, requires HTTPS, and opens it outside the application.
+Do not put a bank account number, payment secret, or private QR code in HTML, source control, screenshots, or public environment examples. Connect the payout account privately inside the approved provider. EvidenceDesk reads hosted URLs from `EVIDENCEDESK_CHECKOUT_URL` and `EVIDENCEDESK_SUPPORT_URL`, requires HTTPS, and opens them outside the application.
 
 For a real subscription, the browser must never decide that a customer is paid. The minimum backend flow is:
 
@@ -42,7 +42,9 @@ Server-side entitlement and usage checks
 Billing portal, cancellation, and audit events
 ```
 
-Before enabling live checkout, add:
+EvidenceDesk v0.7 implements signed Lemon Squeezy-compatible webhook verification, idempotent minimal event storage, and an admin-only notification surface. It intentionally does not store card/bank details and does not activate plan entitlements.
+
+Before enabling live checkout, still add:
 
 - a durable PostgreSQL database and object storage;
 - user accounts and tenant ownership;

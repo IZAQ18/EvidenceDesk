@@ -5,7 +5,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Classification = Literal["public", "internal", "confidential"]
@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     expose_api_docs: bool = False
     public_base_url: str | None = None
     support_url: str | None = None
+    checkout_url: str | None = None
+    payment_webhook_secret: SecretStr | None = None
     allowed_hosts: str = "localhost,127.0.0.1,testserver,*.onrender.com,*.koyeb.app"
 
     @field_validator("api_keys", mode="before")
@@ -59,14 +61,14 @@ class Settings(BaseSettings):
             return json.loads(value)
         return value
 
-    @field_validator("support_url")
+    @field_validator("support_url", "checkout_url")
     @classmethod
     def validate_support_url(cls, value: str | None) -> str | None:
         if value is None or not value.strip():
             return None
         normalized = value.strip()
         if not normalized.startswith("https://"):
-            raise ValueError("EVIDENCEDESK_SUPPORT_URL must use HTTPS")
+            raise ValueError("Payment and support URLs must use HTTPS")
         return normalized
 
     def resolved_api_keys(self) -> dict[str, PrincipalConfig]:

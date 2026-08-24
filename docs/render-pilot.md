@@ -12,6 +12,20 @@ Render is the recommended no-cost test host for EvidenceDesk. Its free web servi
 
 The Blueprint builds the Dockerfile, includes Tesseract OCR, waits for GitHub checks before automatic deployment, uses `/health`, and supplies the safe pilot limits. The access code is declared with `sync: false`, so its value is entered in Render and never committed to Git.
 
+## Optional global checkout and payment notifications
+
+Create and activate the hosted checkout with your payment provider first. Connect your MCB payout account only inside that provider's verified dashboard. Then add these values manually under the Render service's **Environment** settings:
+
+```dotenv
+EVIDENCEDESK_CHECKOUT_URL=https://your-store.example/checkout/buy/your-product
+EVIDENCEDESK_SUPPORT_URL=https://your-provider.example/your-support-page
+EVIDENCEDESK_PAYMENT_WEBHOOK_SECRET=generated-in-the-provider-dashboard
+```
+
+Configure the provider callback as `https://YOUR-SERVICE.onrender.com/v1/payments/webhook`. EvidenceDesk verifies the `X-Signature`, stores a minimal idempotent event, masks the customer email, and displays it to admins under **Insights → Payment notifications**. The webhook is a notification mechanism only; it does not yet grant paid product access.
+
+Render's free ephemeral SQLite database is not a financial ledger. The payment provider dashboard remains the source of truth, and live commercial launch should move payment-event state to durable PostgreSQL before relying on the in-app panel.
+
 ## Verify the pilot
 
 1. Wait for the initial Docker deployment to become live.

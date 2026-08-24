@@ -107,6 +107,22 @@ CREATE TABLE IF NOT EXISTS audit_events (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_audit_tenant ON audit_events(tenant_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS payment_events (
+    event_key TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    event_name TEXT NOT NULL,
+    provider_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    amount_minor INTEGER NOT NULL DEFAULT 0,
+    currency TEXT NOT NULL,
+    customer_hint TEXT,
+    test_mode INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_payment_events_tenant
+    ON payment_events(tenant_id, created_at DESC);
 """
 
 

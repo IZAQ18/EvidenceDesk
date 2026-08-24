@@ -43,6 +43,7 @@ from app.models import (
     MessageOut,
     Principal,
 )
+from app.payments import InvalidPaymentWebhook, parse_lemonsqueezy_webhook
 from app.pilot import (
     PILOT_COOKIE,
     access_page,
@@ -142,7 +143,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     show_docs = resolved_settings.env != "production" or resolved_settings.expose_api_docs
     app = FastAPI(
         title="EvidenceDesk",
-        version="0.6.0",
+        version="0.7.0",
         description="A secure evidence workspace with citations, OCR, conversations, and feedback.",
         lifespan=lifespan,
         docs_url="/docs" if show_docs else None,
@@ -171,6 +172,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "/pilot-background.png",
             "/developer-signature.png",
             "/access",
+            "/v1/payments/webhook",
         }
         if (
             resolved_settings.pilot_access_code
@@ -214,7 +216,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 connection.execute("SELECT 1").fetchone()
         except sqlite3.Error as exc:
             raise HTTPException(status_code=503, detail="Database unavailable") from exc
-        return {"status": "ok", "service": "evidencedesk", "version": "0.6.0"}
+        return {"status": "ok", "service": "evidencedesk", "version": "0.7.0"}
 
     @app.get("/robots.txt", response_class=PlainTextResponse, include_in_schema=False)
     def robots() -> PlainTextResponse:
@@ -267,6 +269,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             path="/",
         )
         return response
+
+    @app.post("/v1/payments/webhook", include_in_schema=False)
+    async def payment_webhook(request: Request) -> dict[str, bool]:
+        configured_secret = resolved_settings.payment_webhook_secret
+        if configured_secret is None:
+            raise HTTPException(status_code=404, detail="Payment integration is not configured")
+        body = await request.body()
+        if len(body) > 1_000_000:
+            raise HTTPException(status_code=413, detail="Payment event is too large")
+        try:
+            event = parse_lemonsqueezy_webhook(
+                body,
+                request.headers.get("X-Signature"),
+                configured_secret.get_secret_value(),
+            )
+        except InvalidPaymentWebhook as exc:
+            raise HTTPException(status_code=401, detail="Invalid payment event") from exc
+        created = repository.record_payment_event(
+            event,
+            tenant_id=resolved_settings.pilot_tenant_id,
+        )
+        logger.info(
+            "payment_event provider=lemonsqueezy event=%s stored=%s test_mode=%s",
+            event.event_name,
+            created,
+            event.test_mode,
+        )
+        return {"accepted": True, "duplicate": not created}
 
     @app.get("/v1/capabilities", dependencies=[Depends(enforce_rate_limit)])
     def capabilities(_: Principal = Depends(authenticate_key)) -> dict[str, object]:
@@ -621,6 +651,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         html = html.replace(
             "__SUPPORT_URL__", json.dumps(resolved_settings.support_url or "")
+        )
+        html = html.replace(
+            "__CHECKOUT_URL__", json.dumps(resolved_settings.checkout_url or "")
         )
         return HTMLResponse(html)
 
