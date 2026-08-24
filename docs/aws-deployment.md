@@ -16,9 +16,9 @@ or experience claim.
   SQLite/original-file data set into an empty PostgreSQL/S3 target.
 - [`infra/aws/evidencedesk-data.json`](../infra/aws/evidencedesk-data.json) defines the durable data
   plane with CloudFormation: a private encrypted/versioned S3 bucket, a private encrypted RDS for
-  PostgreSQL instance, an RDS-managed password in Secrets Manager, backups, retain/snapshot
-  deletion behavior, and an ECS task role restricted to the EvidenceDesk object prefix and data
-  key.
+  PostgreSQL instance, separate bootstrap/runtime credentials in Secrets Manager, backups,
+  retain/snapshot deletion behavior, and an ECS task role restricted to the EvidenceDesk object
+  prefix, application secret, and data key.
 
 The template has not been applied by this repository. Creating it can incur AWS charges. RDS and
 S3 eligibility, credits, and prices depend on account age, region, configuration, and usage; review
@@ -49,13 +49,20 @@ example for an already-operated production platform.
    only after the estimated charges are acceptable.
 
 Do not put AWS access keys in `.env`. In ECS, attach the output `ApplicationTaskRoleArn` as the task
-role and use an execution role for image pulls/log delivery.
+role and use an execution role for image pulls/log delivery. The task role can read the separate
+application database secret; it cannot read the RDS master secret.
 
 ## Application configuration
 
-The RDS-managed secret provides `username` and `password`. Inject those JSON fields into the two
-password component variables through the ECS task definition; use stack outputs for the other
-values:
+The RDS-managed secret is for one-time database administration only. During bootstrap, retrieve it
+through a tightly controlled operator role, retrieve the generated `ApplicationDatabaseSecretArn`,
+and create the matching `evidencedesk_app` PostgreSQL login. Make that role the owner of the empty
+EvidenceDesk database so startup migrations can create and update the application schema. Do not
+give it RDS administration roles, and do not attach the master secret to ECS.
+
+After bootstrap, inject `username` and `password` JSON fields from
+`ApplicationDatabaseSecretArn` into the component variables through the ECS task definition; use
+stack outputs for the other values:
 
 ```dotenv
 EVIDENCEDESK_ENV=production
@@ -63,8 +70,8 @@ EVIDENCEDESK_DATABASE_BACKEND=postgres
 EVIDENCEDESK_DATABASE_HOST=<DatabaseEndpoint output>
 EVIDENCEDESK_DATABASE_PORT=5432
 EVIDENCEDESK_DATABASE_NAME=<DatabaseName output>
-EVIDENCEDESK_DATABASE_USER=<username from DatabaseSecretArn>
-EVIDENCEDESK_DATABASE_PASSWORD=<password from DatabaseSecretArn>
+EVIDENCEDESK_DATABASE_USER=<username from ApplicationDatabaseSecretArn>
+EVIDENCEDESK_DATABASE_PASSWORD=<password from ApplicationDatabaseSecretArn>
 EVIDENCEDESK_DATABASE_SSLMODE=verify-full
 EVIDENCEDESK_DATABASE_POOL_MIN_SIZE=1
 EVIDENCEDESK_DATABASE_POOL_MAX_SIZE=5
@@ -121,8 +128,10 @@ Before directing users to the managed service:
 3. Compare migration row counts and run the full evaluation suite.
 4. Take a manual RDS snapshot, restore it to a separate private instance, and repeat a read-only
    smoke test. Automated backups are configuration, not proof of restore.
-5. Confirm S3 version recovery on a disposable synthetic object.
-6. Keep the original source offline and unchanged through the acceptance window.
+5. Confirm the ECS task role cannot retrieve `DatabaseBootstrapSecretArn` and cannot access S3
+   objects outside `evidencedesk/originals/`.
+6. Confirm S3 version recovery on a disposable synthetic object.
+7. Keep the original source offline and unchanged through the acceptance window.
 
 Rollback means routing traffic back to the unchanged source deployment before accepting new writes
 on both sides. Do not try to merge two independently written databases. After final acceptance,

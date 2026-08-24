@@ -41,3 +41,10 @@ def test_aws_data_template_has_private_recoverable_defaults():
     assert "s3:PutObject" in actions
     assert "secretsmanager:GetSecretValue" in actions
     assert "kms:Decrypt" in actions
+    secret_statement = next(
+        statement
+        for statement in role_statements
+        if statement["Sid"] == "ReadApplicationDatabaseSecret"
+    )
+    assert secret_statement["Resource"] == {"Ref": "ApplicationDatabaseSecret"}
+    assert "MasterUserSecret" not in json.dumps(secret_statement)

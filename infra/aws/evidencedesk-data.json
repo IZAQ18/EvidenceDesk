@@ -232,6 +232,22 @@
       "DeletionPolicy": "Snapshot",
       "UpdateReplacePolicy": "Snapshot"
     },
+    "ApplicationDatabaseSecret": {
+      "Type": "AWS::SecretsManager::Secret",
+      "Properties": {
+        "Description": "EvidenceDesk runtime database role; create the matching PostgreSQL role during bootstrap",
+        "KmsKeyId": {"Ref": "DataKey"},
+        "GenerateSecretString": {
+          "SecretStringTemplate": "{\"username\":\"evidencedesk_app\"}",
+          "GenerateStringKey": "password",
+          "PasswordLength": 32,
+          "ExcludePunctuation": true
+        },
+        "Tags": [{"Key": "Application", "Value": "EvidenceDesk"}]
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
     "ApplicationTaskRole": {
       "Type": "AWS::IAM::Role",
       "Properties": {
@@ -267,10 +283,10 @@
                 "Resource": {"Fn::GetAtt": ["DataKey", "Arn"]}
               },
               {
-                "Sid": "ReadDatabaseSecret",
+                "Sid": "ReadApplicationDatabaseSecret",
                 "Effect": "Allow",
                 "Action": "secretsmanager:GetSecretValue",
-                "Resource": {"Fn::GetAtt": ["Database", "MasterUserSecret.SecretArn"]}
+                "Resource": {"Ref": "ApplicationDatabaseSecret"}
               }
             ]
           }
@@ -286,7 +302,8 @@
     "DatabasePort": {"Value": {"Fn::GetAtt": ["Database", "Endpoint.Port"]}},
     "DatabaseName": {"Value": {"Ref": "DatabaseName"}},
     "DatabaseUsername": {"Value": {"Ref": "DatabaseUsername"}},
-    "DatabaseSecretArn": {"Value": {"Fn::GetAtt": ["Database", "MasterUserSecret.SecretArn"]}},
+    "DatabaseBootstrapSecretArn": {"Value": {"Fn::GetAtt": ["Database", "MasterUserSecret.SecretArn"]}},
+    "ApplicationDatabaseSecretArn": {"Value": {"Ref": "ApplicationDatabaseSecret"}},
     "ApplicationTaskRoleArn": {"Value": {"Fn::GetAtt": ["ApplicationTaskRole", "Arn"]}}
   }
 }
