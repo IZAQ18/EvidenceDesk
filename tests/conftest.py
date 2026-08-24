@@ -10,6 +10,7 @@ from app.main import create_app
 @pytest.fixture
 def client(tmp_path):
     settings = Settings(
+        _env_file=None,
         env="test",
         db_path=tmp_path / "test.db",
         document_store_path=tmp_path / "originals",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import logging
 import re
 import sqlite3
@@ -141,7 +142,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     show_docs = resolved_settings.env != "production" or resolved_settings.expose_api_docs
     app = FastAPI(
         title="EvidenceDesk",
-        version="0.5.0",
+        version="0.6.0",
         description="A secure evidence workspace with citations, OCR, conversations, and feedback.",
         lifespan=lifespan,
         docs_url="/docs" if show_docs else None,
@@ -168,6 +169,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "/robots.txt",
             "/social-card.png",
             "/pilot-background.png",
+            "/developer-signature.png",
             "/access",
         }
         if (
@@ -212,7 +214,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 connection.execute("SELECT 1").fetchone()
         except sqlite3.Error as exc:
             raise HTTPException(status_code=503, detail="Database unavailable") from exc
-        return {"status": "ok", "service": "evidencedesk", "version": "0.5.0"}
+        return {"status": "ok", "service": "evidencedesk", "version": "0.6.0"}
 
     @app.get("/robots.txt", response_class=PlainTextResponse, include_in_schema=False)
     def robots() -> PlainTextResponse:
@@ -229,6 +231,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def pilot_background() -> FileResponse:
         return FileResponse(
             Path(__file__).parent / "assets" / "evidencedesk-social-background.png",
+            media_type="image/png",
+        )
+
+    @app.get("/developer-signature.png", include_in_schema=False)
+    def developer_signature() -> FileResponse:
+        return FileResponse(
+            Path(__file__).parent / "assets" / "izaq-developer-signature.png",
             media_type="image/png",
         )
 
@@ -609,6 +618,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         html = UI_HTML.replace("__SOCIAL_CARD_URL__", f"{base_url}/social-card.png")
         html = html.replace(
             "__PILOT_MODE__", "true" if resolved_settings.pilot_access_code else "false"
+        )
+        html = html.replace(
+            "__SUPPORT_URL__", json.dumps(resolved_settings.support_url or "")
         )
         return HTMLResponse(html)
 

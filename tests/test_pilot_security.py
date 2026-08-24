@@ -1,4 +1,6 @@
+import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from app.config import Settings
 from app.main import create_app
@@ -49,8 +51,12 @@ def test_protected_pilot_gate_and_seeded_content(tmp_path):
         workspace = client.get("/")
         assert workspace.status_code == 200
         assert "IZAQ" in workspace.text
+        assert "plansView" in workspace.text
+        assert "/developer-signature.png" in workspace.text
         assert "const PILOT_MODE=true" in workspace.text
+        assert 'const SUPPORT_URL=""' in workspace.text
         assert "__SOCIAL_CARD_URL__" not in workspace.text
+        assert "__SUPPORT_URL__" not in workspace.text
 
         documents = client.get("/v1/documents")
         assert documents.status_code == 200
@@ -63,6 +69,25 @@ def test_protected_pilot_gate_and_seeded_content(tmp_path):
         social_card = client.get("/social-card.png")
         assert social_card.status_code == 200
         assert social_card.headers["content-type"] == "image/png"
+        developer_signature = client.get("/developer-signature.png")
+        assert developer_signature.status_code == 200
+        assert developer_signature.headers["content-type"] == "image/png"
+
+
+def test_support_link_is_https_and_injected_as_data(tmp_path):
+    settings = Settings(
+        _env_file=None,
+        db_path=tmp_path / "support.db",
+        document_store_path=tmp_path / "originals",
+        support_url="https://checkout.example.com/evidencedesk",
+    )
+
+    with TestClient(create_app(settings)) as client:
+        workspace = client.get("/")
+        assert 'const SUPPORT_URL="https://checkout.example.com/evidencedesk"' in workspace.text
+
+    with pytest.raises(ValidationError, match="must use HTTPS"):
+        Settings(_env_file=None, support_url="javascript:alert(1)")
 
 
 def test_production_without_authentication_fails_closed(tmp_path):

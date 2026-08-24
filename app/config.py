@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     seed_demo_content: bool = False
     expose_api_docs: bool = False
     public_base_url: str | None = None
+    support_url: str | None = None
     allowed_hosts: str = "localhost,127.0.0.1,testserver,*.onrender.com,*.koyeb.app"
 
     @field_validator("api_keys", mode="before")
@@ -57,6 +58,16 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return json.loads(value)
         return value
+
+    @field_validator("support_url")
+    @classmethod
+    def validate_support_url(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        normalized = value.strip()
+        if not normalized.startswith("https://"):
+            raise ValueError("EVIDENCEDESK_SUPPORT_URL must use HTTPS")
+        return normalized
 
     def resolved_api_keys(self) -> dict[str, PrincipalConfig]:
         if isinstance(self.api_keys, dict) and self.api_keys:

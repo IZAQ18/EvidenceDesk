@@ -6,7 +6,7 @@ EvidenceDesk is a secure, citation-first knowledge assistant for organizational 
 
 This is an intentionally honest portfolio MVP. It runs locally and demonstrates production-minded design, but it is **not** represented as GovCloud-ready, compliance-certified, or proven at large scale.
 
-## What v0.5 includes
+## What v0.6 includes
 
 - Page-aware PDF extraction with bounded OCR fallback for weak pages.
 - Original-file and extracted-page preview with highlighted cited passages.
@@ -21,6 +21,8 @@ This is an intentionally honest portfolio MVP. It runs locally and demonstrates 
 - Prompt starters, auto-growing questions, toast feedback, `/` question focus, and `Ctrl/Cmd + K` library search.
 - A replayable cinematic intro with an IZAQ maker reveal, progress counter, skip control, mobile composition, and reduced-motion fallback.
 - Aurora, Cobalt, and Ember accent palettes, interactive pointer light, spectrum navigation, and more expressive verified-evidence states.
+- An IZAQ portrait signature across the access gate, cinematic intro, header, and product rail.
+- A clearly labeled freemium product preview with Free, planned Pro, planned Team, and a provider-hosted support link. Billing and quotas are not active yet.
 - Docker, GitHub Actions CI, evaluation/security tests, and a concrete path to standard AWS.
 
 ## Architecture at a glance
@@ -90,6 +92,18 @@ Docker starts in production mode and fails closed unless authentication is confi
 The recommended portfolio pilot uses Render's free Docker web service with a private GitHub repository. A separate access-code page creates an HttpOnly session, production API documentation is hidden, search engines are told not to index the site, and two fictional Northstar Labs documents are restored after an ephemeral restart. This is privacy-in-depth, not a claim that browser-delivered interface code is invisible.
 
 See the [Render pilot guide](docs/render-pilot.md) and [code-protection notes](docs/code-protection.md). The free instance sleeps after 15 minutes and its local storage can reset, so use it only for synthetic reviewer demonstrations—not sensitive documents or an official production launch. The [Koyeb guide](docs/koyeb-pilot.md) is retained as a paid-plan alternative.
+
+### Freemium and revenue preview
+
+The **Plans** view shows the intended customer journey without pretending that checkout is finished. The current Free pilot is a protected, synthetic-data demonstration. Pro and Team are roadmap concepts; clicking them does not activate an entitlement or take payment.
+
+If a payment or creator-support provider approves your account, configure its hosted HTTPS link rather than exposing bank details:
+
+```dotenv
+EVIDENCEDESK_SUPPORT_URL=https://your-provider.example/your-checkout
+```
+
+The safest first commercial offer is a **founding team pilot**: one organization pays for controlled onboarding, an agreed synthetic/non-sensitive evaluation, and a clear success report. Subscription checkout should follow only after durable storage, accounts, usage metering, entitlements, terms, privacy, refunds, and webhook verification exist. See the [monetization plan](docs/monetization.md).
 
 ## A simple demo
 
