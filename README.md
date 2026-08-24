@@ -25,7 +25,7 @@ This is an intentionally honest portfolio MVP. It runs locally and demonstrates 
 - A clearly labeled freemium product preview with Free, planned Pro, a founding Team pilot, and provider-hosted checkout/support links.
 - Lemon Squeezy-compatible HMAC webhook verification, idempotent payment-event storage, masked customer hints, and admin-only payment notifications. Paid feature entitlements are not active yet.
 - A public `/about` product page for LinkedIn visitors and payment-provider review, while the document workspace remains behind the private pilot gate.
-- A larger IZAQ support presentation with consented MCB and NayaPay recipient details plus a clearly labeled 40% developer charity pledge. The MCB value is labeled as an account number because it is not a full Pakistan-format IBAN.
+- A larger IZAQ support presentation with consented MCB and NayaPay recipient IBANs plus a clearly labeled 40% developer charity pledge.
 - Docker, GitHub Actions CI, evaluation/security tests, and a concrete path to standard AWS.
 
 ## Architecture at a glance

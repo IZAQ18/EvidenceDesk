@@ -32,10 +32,10 @@ def test_protected_pilot_gate_and_seeded_content(tmp_path):
         assert "40%" in public_site.text
         assert "registered charity" in public_site.text
         assert "Ahsan Maqbool Ahmad" in public_site.text
-        assert "1160981131004752" in public_site.text
+        assert "PK58 MUCB 1160 9811 3100 4752" in public_site.text
         assert "Muhammad Qasim Ayub" in public_site.text
         assert "PK83 NAYA 1234 5030 6196 1996" in public_site.text
-        assert "not a full Pakistan-format IBAN" in public_site.text
+        assert "passed the standard IBAN checksum" in public_site.text
         assert public_site.headers["x-robots-tag"] == "index, follow"
         assert "public" in public_site.headers["cache-control"]
 
@@ -51,7 +51,7 @@ def test_protected_pilot_gate_and_seeded_content(tmp_path):
         assert rejected.status_code == 401
         assert "not accepted" in rejected.text
         assert "Support IZAQ" in rejected.text
-        assert "1160981131004752" in rejected.text
+        assert "PK58 MUCB 1160 9811 3100 4752" in rejected.text
         assert "PK83 NAYA 1234 5030 6196 1996" in rejected.text
 
         unlocked = client.post(
