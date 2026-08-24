@@ -161,30 +161,33 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        resolved_settings.validate_auth()
-        resolved_settings.validate_storage()
-        resolved_settings.validate_model_gateway()
-        resolved_settings.resolved_api_keys()
-        database.initialize()
-        if resolved_settings.seed_demo_content:
-            _seed_demo_documents(resolved_settings, repository, storage)
-        capability = ocr_capability(resolved_settings)
-        logger.info(
-            "service_started environment=%s ocr_available=%s",
-            resolved_settings.env,
-            capability["available"],
-        )
         worker_stop = asyncio.Event()
         worker_task: asyncio.Task[None] | None = None
-        if resolved_settings.ingestion_worker_enabled:
-            worker_task = asyncio.create_task(
-                run_ingestion_worker(repository, storage, resolved_settings, worker_stop)
-            )
         try:
+            resolved_settings.validate_auth()
+            resolved_settings.validate_storage()
+            resolved_settings.validate_model_gateway()
+            resolved_settings.resolved_api_keys()
+            database.initialize()
+            if resolved_settings.seed_demo_content:
+                _seed_demo_documents(resolved_settings, repository, storage)
+            capability = ocr_capability(resolved_settings)
+            logger.info(
+                "service_started environment=%s ocr_available=%s",
+                resolved_settings.env,
+                capability["available"],
+            )
+            if resolved_settings.ingestion_worker_enabled:
+                worker_task = asyncio.create_task(
+                    run_ingestion_worker(repository, storage, resolved_settings, worker_stop)
+                )
             yield
         finally:
-            if worker_task:
-                await stop_ingestion_worker(worker_stop, worker_task)
+            try:
+                if worker_task:
+                    await stop_ingestion_worker(worker_stop, worker_task)
+            finally:
+                database.close()
 
     show_docs = resolved_settings.env != "production" or resolved_settings.expose_api_docs
     app = FastAPI(
@@ -215,6 +218,7 @@ def create_app(
         started = time.perf_counter()
         public_paths = {
             "/health",
+            "/ready",
             "/robots.txt",
             "/social-card.png",
             "/pilot-background.png",
@@ -272,6 +276,23 @@ def create_app(
         except Exception as exc:
             raise HTTPException(status_code=503, detail="Database unavailable") from exc
         return {"status": "ok", "service": "evidencedesk", "version": "1.0.0"}
+
+    @app.get("/ready")
+    def readiness() -> JSONResponse:
+        checks = {"database": False, "original_storage": False}
+        try:
+            checks["database"] = database.ping()
+        except Exception as exc:
+            logger.warning("readiness_failed dependency=database type=%s", type(exc).__name__)
+        try:
+            checks["original_storage"] = storage.ping()
+        except Exception as exc:
+            logger.warning("readiness_failed dependency=original_storage type=%s", type(exc).__name__)
+        ready = all(checks.values())
+        return JSONResponse(
+            {"status": "ready" if ready else "unavailable", "checks": checks},
+            status_code=200 if ready else 503,
+        )
 
     @app.get("/robots.txt", response_class=PlainTextResponse, include_in_schema=False)
     def robots() -> PlainTextResponse:

@@ -1,0 +1,292 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "EvidenceDesk durable data plane: private encrypted S3 originals, private RDS PostgreSQL, and a least-privilege ECS task role. This template does not deploy the application.",
+  "Metadata": {
+    "EvidenceDesk": {
+      "Scope": "Standard commercial AWS only; not GovCloud and not a production-operation claim",
+      "CostWarning": "Creating this stack can incur AWS charges. Review pricing and parameters before deployment."
+    }
+  },
+  "Parameters": {
+    "EnvironmentName": {
+      "Type": "String",
+      "Default": "pilot",
+      "AllowedPattern": "^[a-z][a-z0-9-]{1,20}$"
+    },
+    "VpcId": {
+      "Type": "AWS::EC2::VPC::Id"
+    },
+    "PrivateSubnetIds": {
+      "Type": "List<AWS::EC2::Subnet::Id>",
+      "Description": "At least two private subnets in different Availability Zones."
+    },
+    "ApplicationSecurityGroupId": {
+      "Type": "AWS::EC2::SecurityGroup::Id",
+      "Description": "Security group attached to the EvidenceDesk ECS tasks."
+    },
+    "DatabaseName": {
+      "Type": "String",
+      "Default": "evidencedesk",
+      "AllowedPattern": "^[A-Za-z][A-Za-z0-9_]{0,62}$"
+    },
+    "DatabaseUsername": {
+      "Type": "String",
+      "Default": "evidencedesk_admin",
+      "AllowedPattern": "^[A-Za-z][A-Za-z0-9_]{0,62}$"
+    },
+    "DatabaseInstanceClass": {
+      "Type": "String",
+      "Default": "db.t4g.micro",
+      "AllowedPattern": "^db\\.[A-Za-z0-9.]+$"
+    },
+    "AllocatedStorageGiB": {
+      "Type": "Number",
+      "Default": 20,
+      "MinValue": 20,
+      "MaxValue": 1000
+    },
+    "BackupRetentionDays": {
+      "Type": "Number",
+      "Default": 7,
+      "MinValue": 1,
+      "MaxValue": 35
+    },
+    "EnableMultiAZ": {
+      "Type": "String",
+      "Default": "false",
+      "AllowedValues": ["true", "false"],
+      "Description": "Set true only after reviewing the additional cost."
+    },
+    "EnableDeletionProtection": {
+      "Type": "String",
+      "Default": "true",
+      "AllowedValues": ["true", "false"]
+    }
+  },
+  "Conditions": {
+    "UseMultiAZ": {"Fn::Equals": [{"Ref": "EnableMultiAZ"}, "true"]},
+    "ProtectDatabase": {"Fn::Equals": [{"Ref": "EnableDeletionProtection"}, "true"]}
+  },
+  "Resources": {
+    "DataKey": {
+      "Type": "AWS::KMS::Key",
+      "Properties": {
+        "Description": "EvidenceDesk originals, database, and managed-secret encryption",
+        "EnableKeyRotation": true,
+        "KeyPolicy": {
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Sid": "AccountAdministration",
+            "Effect": "Allow",
+            "Principal": {"AWS": {"Fn::Sub": "arn:${AWS::Partition}:iam::${AWS::AccountId}:root"}},
+            "Action": "kms:*",
+            "Resource": "*"
+          }]
+        },
+        "Tags": [{"Key": "Application", "Value": "EvidenceDesk"}]
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "DataKeyAlias": {
+      "Type": "AWS::KMS::Alias",
+      "Properties": {
+        "AliasName": {"Fn::Sub": "alias/evidencedesk-${EnvironmentName}-data"},
+        "TargetKeyId": {"Ref": "DataKey"}
+      }
+    },
+    "OriginalsBucket": {
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [{
+            "BucketKeyEnabled": true,
+            "ServerSideEncryptionByDefault": {
+              "SSEAlgorithm": "aws:kms",
+              "KMSMasterKeyID": {"Fn::GetAtt": ["DataKey", "Arn"]}
+            }
+          }]
+        },
+        "OwnershipControls": {"Rules": [{"ObjectOwnership": "BucketOwnerEnforced"}]},
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        },
+        "VersioningConfiguration": {"Status": "Enabled"},
+        "LifecycleConfiguration": {
+          "Rules": [{
+            "Id": "ExpireOldNoncurrentVersions",
+            "Status": "Enabled",
+            "NoncurrentVersionExpiration": {"NoncurrentDays": 90}
+          }]
+        },
+        "Tags": [
+          {"Key": "Application", "Value": "EvidenceDesk"},
+          {"Key": "Environment", "Value": {"Ref": "EnvironmentName"}}
+        ]
+      },
+      "DeletionPolicy": "Retain",
+      "UpdateReplacePolicy": "Retain"
+    },
+    "OriginalsBucketPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": {"Ref": "OriginalsBucket"},
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "DenyInsecureTransport",
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:*",
+              "Resource": [
+                {"Fn::GetAtt": ["OriginalsBucket", "Arn"]},
+                {"Fn::Sub": "${OriginalsBucket.Arn}/*"}
+              ],
+              "Condition": {"Bool": {"aws:SecureTransport": "false"}}
+            },
+            {
+              "Sid": "DenyMissingEncryptionHeader",
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:PutObject",
+              "Resource": {"Fn::Sub": "${OriginalsBucket.Arn}/*"},
+              "Condition": {"Null": {"s3:x-amz-server-side-encryption": "true"}}
+            },
+            {
+              "Sid": "DenyWrongEncryption",
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:PutObject",
+              "Resource": {"Fn::Sub": "${OriginalsBucket.Arn}/*"},
+              "Condition": {"StringNotEquals": {"s3:x-amz-server-side-encryption": "aws:kms"}}
+            },
+            {
+              "Sid": "DenyWrongKmsKey",
+              "Effect": "Deny",
+              "Principal": "*",
+              "Action": "s3:PutObject",
+              "Resource": {"Fn::Sub": "${OriginalsBucket.Arn}/*"},
+              "Condition": {
+                "StringNotEquals": {
+                  "s3:x-amz-server-side-encryption-aws-kms-key-id": {"Fn::GetAtt": ["DataKey", "Arn"]}
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "DatabaseSubnetGroup": {
+      "Type": "AWS::RDS::DBSubnetGroup",
+      "Properties": {
+        "DBSubnetGroupDescription": "Private subnets for EvidenceDesk PostgreSQL",
+        "SubnetIds": {"Ref": "PrivateSubnetIds"}
+      }
+    },
+    "DatabaseSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Allow PostgreSQL only from EvidenceDesk application tasks",
+        "VpcId": {"Ref": "VpcId"},
+        "SecurityGroupIngress": [{
+          "IpProtocol": "tcp",
+          "FromPort": 5432,
+          "ToPort": 5432,
+          "SourceSecurityGroupId": {"Ref": "ApplicationSecurityGroupId"}
+        }],
+        "SecurityGroupEgress": []
+      }
+    },
+    "Database": {
+      "Type": "AWS::RDS::DBInstance",
+      "Properties": {
+        "Engine": "postgres",
+        "DBName": {"Ref": "DatabaseName"},
+        "MasterUsername": {"Ref": "DatabaseUsername"},
+        "ManageMasterUserPassword": true,
+        "MasterUserSecret": {"KmsKeyId": {"Ref": "DataKey"}},
+        "DBInstanceClass": {"Ref": "DatabaseInstanceClass"},
+        "AllocatedStorage": {"Ref": "AllocatedStorageGiB"},
+        "MaxAllocatedStorage": 1000,
+        "StorageType": "gp3",
+        "StorageEncrypted": true,
+        "KmsKeyId": {"Ref": "DataKey"},
+        "DBSubnetGroupName": {"Ref": "DatabaseSubnetGroup"},
+        "VPCSecurityGroups": [{"Fn::GetAtt": ["DatabaseSecurityGroup", "GroupId"]}],
+        "PubliclyAccessible": false,
+        "Port": 5432,
+        "BackupRetentionPeriod": {"Ref": "BackupRetentionDays"},
+        "CopyTagsToSnapshot": true,
+        "AutoMinorVersionUpgrade": true,
+        "MultiAZ": {"Fn::If": ["UseMultiAZ", true, false]},
+        "DeletionProtection": {"Fn::If": ["ProtectDatabase", true, false]},
+        "Tags": [
+          {"Key": "Application", "Value": "EvidenceDesk"},
+          {"Key": "Environment", "Value": {"Ref": "EnvironmentName"}}
+        ]
+      },
+      "DeletionPolicy": "Snapshot",
+      "UpdateReplacePolicy": "Snapshot"
+    },
+    "ApplicationTaskRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Effect": "Allow",
+            "Principal": {"Service": "ecs-tasks.amazonaws.com"},
+            "Action": "sts:AssumeRole"
+          }]
+        },
+        "Policies": [{
+          "PolicyName": "EvidenceDeskDataAccess",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Sid": "ReadBucketMetadata",
+                "Effect": "Allow",
+                "Action": "s3:ListBucket",
+                "Resource": {"Fn::GetAtt": ["OriginalsBucket", "Arn"]}
+              },
+              {
+                "Sid": "ManageOriginalsPrefix",
+                "Effect": "Allow",
+                "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+                "Resource": {"Fn::Sub": "${OriginalsBucket.Arn}/evidencedesk/originals/*"}
+              },
+              {
+                "Sid": "UseDataKey",
+                "Effect": "Allow",
+                "Action": ["kms:Decrypt", "kms:Encrypt", "kms:GenerateDataKey", "kms:DescribeKey"],
+                "Resource": {"Fn::GetAtt": ["DataKey", "Arn"]}
+              },
+              {
+                "Sid": "ReadDatabaseSecret",
+                "Effect": "Allow",
+                "Action": "secretsmanager:GetSecretValue",
+                "Resource": {"Fn::GetAtt": ["Database", "MasterUserSecret.SecretArn"]}
+              }
+            ]
+          }
+        }],
+        "Tags": [{"Key": "Application", "Value": "EvidenceDesk"}]
+      }
+    }
+  },
+  "Outputs": {
+    "OriginalsBucketName": {"Value": {"Ref": "OriginalsBucket"}},
+    "DataKeyArn": {"Value": {"Fn::GetAtt": ["DataKey", "Arn"]}},
+    "DatabaseEndpoint": {"Value": {"Fn::GetAtt": ["Database", "Endpoint.Address"]}},
+    "DatabasePort": {"Value": {"Fn::GetAtt": ["Database", "Endpoint.Port"]}},
+    "DatabaseName": {"Value": {"Ref": "DatabaseName"}},
+    "DatabaseUsername": {"Value": {"Ref": "DatabaseUsername"}},
+    "DatabaseSecretArn": {"Value": {"Fn::GetAtt": ["Database", "MasterUserSecret.SecretArn"]}},
+    "ApplicationTaskRoleArn": {"Value": {"Fn::GetAtt": ["ApplicationTaskRole", "Arn"]}}
+  }
+}

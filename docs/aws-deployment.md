@@ -1,81 +1,143 @@
 # Path to standard AWS
 
-This is a deployment design, not a claim that the repository has operated at production scale.
+This is an executable deployment seam and runbook, not a claim that EvidenceDesk has operated at
+production scale. It targets standard commercial AWS. It is not a GovCloud design, authorization,
+or experience claim.
 
-## Small pilot
+## What is implemented
 
-- Build the container in CI and store it in Amazon ECR.
-- Run the API as an ECS Fargate service behind an Application Load Balancer with TLS from ACM.
-- Put originals in an encrypted S3 quarantine bucket; send uploads through an SQS-backed malware-scanning and OCR ingestion task with strict resource limits.
-- Replace SQLite with Amazon RDS for PostgreSQL plus `pgvector`, or use OpenSearch when corpus/search needs justify it.
-- Store application secrets in Secrets Manager and encrypt data with customer-managed KMS keys where policy requires it.
-- Use Cognito or the organization’s OIDC provider; translate identity claims into tenant and classification policy.
-- Keep services in private subnets, use security groups and VPC endpoints, and restrict egress.
-- Send structured logs/metrics to CloudWatch; add alarms for errors, latency, denied requests, queue age, and ingestion failures.
-- Place AWS WAF at the public edge and use managed throttling. Use CloudTrail and AWS Config for control-plane visibility.
+- PostgreSQL schema migrations run once under a transaction advisory lock.
+- Each process uses a bounded Psycopg connection pool and fails startup when the database cannot
+  be reached.
+- Original documents can use a private S3 bucket with KMS encryption and expected-owner checks.
+- `GET /health` checks the process and database; `GET /ready` checks both the database and original
+  store, returning `503` when the instance should not receive traffic.
+- `python -m app.migrate_data` performs a read-only preflight by default and can copy an idle local
+  SQLite/original-file data set into an empty PostgreSQL/S3 target.
+- [`infra/aws/evidencedesk-data.json`](../infra/aws/evidencedesk-data.json) defines the durable data
+  plane with CloudFormation: a private encrypted/versioned S3 bucket, a private encrypted RDS for
+  PostgreSQL instance, an RDS-managed password in Secrets Manager, backups, retain/snapshot
+  deletion behavior, and an ECS task role restricted to the EvidenceDesk object prefix and data
+  key.
 
-## Suggested request path
+The template has not been applied by this repository. Creating it can incur AWS charges. RDS and
+S3 eligibility, credits, and prices depend on account age, region, configuration, and usage; review
+the current official [RDS](https://aws.amazon.com/rds/features/) and
+[S3](https://aws.amazon.com/s3/faqs/) information before creating a stack.
+
+## Small deployment shape
 
 ```text
-Route 53 → WAF → ALB → ECS/Fargate API → RDS PostgreSQL/pgvector
-                            │               │
-                            ├→ S3 originals │
-                            └→ SQS → isolated ingestion workers
+Route 53 → WAF → ALB → ECS/Fargate API → private RDS PostgreSQL
+                            │                    │
+                            ├→ private S3        └→ automated backups/snapshots
+                            └→ SQS → isolated ingestion workers (next milestone)
 ```
 
-## Implemented deployment seam
+The supplied template covers the right-hand data plane, not the VPC, load balancer, ECS service,
+queue, DNS, or WAF. Keeping those separate prevents a reviewer from mistaking an infrastructure
+example for an already-operated production platform.
 
-The original-store interface now supports local storage and private S3 without changing API
-contracts. S3 writes use tenant-scoped generated keys, AES-256 encryption by default or a
-configured KMS key, optional expected-bucket-owner checks, and application-authorized streaming.
-Boto3 obtains credentials from the standard AWS provider chain; an ECS deployment should use a
-least-privilege task role rather than static credentials.
+## Before creating the data stack
 
-Example task configuration:
+1. Select one AWS account and region and set a small budget plus billing alerts.
+2. Create or select a VPC with at least two private subnets in different Availability Zones.
+3. Create the application ECS security group. The template allows port 5432 only from this group.
+4. Review the RDS instance class, storage, backup retention, deletion protection, and Multi-AZ
+   choice. Multi-AZ is disabled by default because it materially changes cost.
+5. Validate the CloudFormation JSON in the AWS console or CLI, inspect the change set, and create it
+   only after the estimated charges are acceptable.
+
+Do not put AWS access keys in `.env`. In ECS, attach the output `ApplicationTaskRoleArn` as the task
+role and use an execution role for image pulls/log delivery.
+
+## Application configuration
+
+The RDS-managed secret provides `username` and `password`. Inject those JSON fields into the two
+password component variables through the ECS task definition; use stack outputs for the other
+values:
 
 ```dotenv
+EVIDENCEDESK_ENV=production
+EVIDENCEDESK_DATABASE_BACKEND=postgres
+EVIDENCEDESK_DATABASE_HOST=<DatabaseEndpoint output>
+EVIDENCEDESK_DATABASE_PORT=5432
+EVIDENCEDESK_DATABASE_NAME=<DatabaseName output>
+EVIDENCEDESK_DATABASE_USER=<username from DatabaseSecretArn>
+EVIDENCEDESK_DATABASE_PASSWORD=<password from DatabaseSecretArn>
+EVIDENCEDESK_DATABASE_SSLMODE=verify-full
+EVIDENCEDESK_DATABASE_POOL_MIN_SIZE=1
+EVIDENCEDESK_DATABASE_POOL_MAX_SIZE=5
+EVIDENCEDESK_DATABASE_POOL_TIMEOUT_SECONDS=10
+
 EVIDENCEDESK_DOCUMENT_STORE_BACKEND=s3
-EVIDENCEDESK_S3_BUCKET=evidencedesk-private-dev
+EVIDENCEDESK_S3_BUCKET=<OriginalsBucketName output>
 EVIDENCEDESK_S3_PREFIX=evidencedesk/originals
-EVIDENCEDESK_S3_REGION=us-east-1
-EVIDENCEDESK_S3_KMS_KEY_ID=alias/evidencedesk-documents
-EVIDENCEDESK_S3_EXPECTED_BUCKET_OWNER=123456789012
+EVIDENCEDESK_S3_REGION=<stack region>
+EVIDENCEDESK_S3_KMS_KEY_ID=<DataKeyArn output>
+EVIDENCEDESK_S3_EXPECTED_BUCKET_OWNER=<12-digit AWS account id>
 ```
 
-The task role needs only the required object actions on the configured prefix plus KMS permissions
-when a customer-managed key is used. The bucket should block all public access, require TLS,
-reject unencrypted writes, enable versioning where recovery rules justify it, and record access
-events according to the organization’s retention policy.
+Use the current Amazon RDS CA bundle in the application image when `verify-full` is selected. The
+component form avoids assembling a URL in an ECS secret; EvidenceDesk percent-encodes credentials
+internally. One small process can start with the default five-connection maximum. Multiply that
+maximum by the desired task count and keep the result safely below the database connection limit.
 
-## PostgreSQL deployment seam
+## Safe local-to-managed migration
 
-The repository now also supports PostgreSQL through `EVIDENCEDESK_DATABASE_BACKEND=postgres` and a
-secret `EVIDENCEDESK_DATABASE_URL`. Versioned schema migrations run under a transaction-scoped
-advisory lock, and PostgreSQL retrieval uses a GIN full-text index. GitHub CI launches PostgreSQL
-16 and validates accounts, ingestion, original streaming, grounded retrieval, citations, and
-cross-tenant isolation through the real driver.
+First stop uploads and wait until every ingestion job is `ready` or `failed`. Back up the source
+database and originals directory. The default command is read-only and verifies row counts, file
+sizes, and SHA-256 digests:
 
-For RDS, use a Secrets Manager-injected URL with `sslmode=verify-full`, an appropriate CA bundle,
-private networking, security-group restrictions, encryption at rest, automated backups, and a
-separate migration/rollback procedure. The CI integration does not constitute an RDS deployment
-or production-scale operating claim.
+```bash
+python -m app.migrate_data \
+  --source-db data/evidencedesk.db \
+  --source-originals data/originals
+```
 
-## Remaining required code and infrastructure
+Configure the target environment shown above, then perform the copy with an explicit, unique ID:
 
-Add a bounded PostgreSQL connection pool and run backup/restore acceptance against the selected
-RDS configuration. Replace the in-memory limiter with edge throttling or Redis. Connect the
-existing JWT validator to the chosen identity provider and verify real claims, key rotation,
-logout, and failure behavior. Put newly uploaded objects into quarantine and run malware scanning,
-extraction, and OCR outside the API process with idempotent jobs, status callbacks, dead-letter
-handling, and CPU/memory/time limits. Add distributed tracing and an explicit model-provider
-gateway if generative synthesis is enabled.
+```bash
+python -m app.migrate_data \
+  --source-db data/evidencedesk.db \
+  --source-originals data/originals \
+  --migration-id pilot_2026_08_25 \
+  --execute
+```
 
-## Release sequence
+Execution refuses a non-PostgreSQL/non-S3 target, an active ingestion queue, or a non-empty target
+database. It copies originals to a unique `migration-<id>` prefix, verifies every digest and S3
+round trip, copies the database in one transaction, verifies table row counts, and leaves the
+source untouched. If object copy succeeds but the database transaction fails, objects may remain
+under that unique prefix; inspect and remove only that exact prefix after resolving the failure.
 
-1. Provision private development S3 and RDS resources with IaC; validate the implemented adapters
-   with a least-privilege ECS task role, TLS, migrations, monitoring, and rollback.
-2. Import a non-sensitive evaluation corpus and pass retrieval, authorization, and restore tests.
-3. Run a time-boxed internal pilot with monitoring and a documented rollback.
-4. Complete security/privacy review and operational readiness checks before broader use.
+## Acceptance and rollback
 
-GovCloud requires separate service-availability, region, boundary, identity, compliance, and procurement decisions. Nothing in this repository should be described as GovCloud experience or authorization.
+Before directing users to the managed service:
+
+1. Start one application task and require both `/health` and `/ready` to return `200`.
+2. Sign in with a test account, open an existing original, ask a known question, follow its
+   citation, upload a synthetic PDF, and permanently delete that synthetic document.
+3. Compare migration row counts and run the full evaluation suite.
+4. Take a manual RDS snapshot, restore it to a separate private instance, and repeat a read-only
+   smoke test. Automated backups are configuration, not proof of restore.
+5. Confirm S3 version recovery on a disposable synthetic object.
+6. Keep the original source offline and unchanged through the acceptance window.
+
+Rollback means routing traffic back to the unchanged source deployment before accepting new writes
+on both sides. Do not try to merge two independently written databases. After final acceptance,
+retain backups according to a written retention/deletion policy rather than deleting them ad hoc.
+
+## Still required before public accounts
+
+- Deploy ALB/ECS in private subnets and terminate TLS with ACM.
+- Move ingestion into SQS-backed, separately constrained workers with malware scanning and a
+  dead-letter queue.
+- Add central logs, metrics, alarms, distributed throttling, incident procedures, and dependency
+  scanning.
+- Complete email verification, password reset, invitations, account deletion/export, privacy
+  terms, and customer-specific quality/security acceptance.
+- Exercise secret rotation, backup restore, failover, and rollback in the selected AWS account.
+
+These are launch gates. A passing local/CI suite and an unapplied CloudFormation template do not
+turn EvidenceDesk into a large-scale production service.

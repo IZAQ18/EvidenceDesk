@@ -510,6 +510,13 @@ class Database:
             connection.executescript(SCHEMA)
             self._migrate(connection)
 
+    def ping(self) -> bool:
+        with self.connect() as connection:
+            return connection.execute("SELECT 1").fetchone()[0] == 1
+
+    def close(self) -> None:
+        return None
+
     @staticmethod
     def is_unique_violation(exc: Exception) -> bool:
         return isinstance(exc, sqlite3.IntegrityError)
@@ -574,18 +581,48 @@ class PostgresConnection:
 class PostgresDatabase:
     dialect = "postgres"
 
-    def __init__(self, url: str):
+    def __init__(
+        self,
+        url: str,
+        *,
+        min_size: int = 1,
+        max_size: int = 5,
+        timeout: float = 10.0,
+    ):
         self.url = url
+        self.min_size = min_size
+        self.max_size = max_size
+        self.timeout = timeout
+        self.pool: Any | None = None
 
     def _driver(self):
         try:
             import psycopg
             from psycopg.rows import dict_row
+            from psycopg_pool import ConnectionPool
         except ImportError as exc:
             raise RuntimeError("Install the PostgreSQL dependencies from requirements.txt") from exc
-        return psycopg, dict_row
+        return psycopg, dict_row, ConnectionPool
+
+    def _ensure_pool(self) -> Any:
+        if self.pool is not None:
+            return self.pool
+        _, dict_row, connection_pool = self._driver()
+        self.pool = connection_pool(
+            conninfo=self.url,
+            min_size=self.min_size,
+            max_size=self.max_size,
+            timeout=self.timeout,
+            kwargs={"row_factory": dict_row, "connect_timeout": 10},
+            check=connection_pool.check_connection,
+            open=False,
+            name="evidencedesk",
+        )
+        return self.pool
 
     def initialize(self) -> None:
+        pool = self._ensure_pool()
+        pool.open(wait=True, timeout=self.timeout)
         with self.connect() as connection:
             connection.execute("SELECT pg_advisory_xact_lock(8242026)")
             connection.execute(
@@ -610,22 +647,25 @@ class PostgresDatabase:
                     (version, datetime.now(UTC).isoformat()),
                 )
 
+    def ping(self) -> bool:
+        with self.connect() as connection:
+            return connection.execute("SELECT 1 AS ready").fetchone()["ready"] == 1
+
+    def close(self) -> None:
+        if self.pool is not None and not self.pool.closed:
+            self.pool.close(timeout=5.0)
+
     @staticmethod
     def is_unique_violation(exc: Exception) -> bool:
         return getattr(exc, "sqlstate", None) == "23505"
 
     @contextmanager
     def connect(self) -> Iterator[PostgresConnection]:
-        psycopg, dict_row = self._driver()
-        connection = psycopg.connect(self.url, row_factory=dict_row, connect_timeout=10)
-        try:
+        pool = self._ensure_pool()
+        if pool.closed:
+            raise RuntimeError("PostgreSQL connection pool is not open")
+        with pool.connection(timeout=self.timeout) as connection:
             yield PostgresConnection(connection)
-            connection.commit()
-        except Exception:
-            connection.rollback()
-            raise
-        finally:
-            connection.close()
 
 
 DatabaseLike = Database | PostgresDatabase
@@ -634,6 +674,10 @@ DatabaseLike = Database | PostgresDatabase
 def build_database(settings: Settings) -> DatabaseLike:
     settings.validate_database()
     if settings.database_backend == "postgres":
-        assert settings.database_url
-        return PostgresDatabase(settings.database_url.get_secret_value())
+        return PostgresDatabase(
+            settings.resolved_database_url(),
+            min_size=settings.database_pool_min_size,
+            max_size=settings.database_pool_max_size,
+            timeout=settings.database_pool_timeout_seconds,
+        )
     return Database(settings.db_path)

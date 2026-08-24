@@ -33,8 +33,9 @@ This is an intentionally honest portfolio MVP. It runs locally and demonstrates 
   private S3 backend using tenant-scoped object keys, authenticated streaming, server-side
   encryption, KMS support, and expected-bucket-owner protection.
 - A dual database boundary: portable SQLite for local/pilot use and PostgreSQL with versioned,
-  advisory-lock-protected schema migrations and PostgreSQL full-text retrieval for durable
-  multi-instance deployments. CI exercises the complete account-to-citation path on PostgreSQL 16.
+  advisory-lock-protected schema migrations, bounded connection pooling, readiness checks, and
+  PostgreSQL full-text retrieval for durable multi-instance deployments. CI exercises the complete
+  account-to-citation path on PostgreSQL 16.
 - Rate limits, upload limits, security headers, safe file storage, prompt-injection flags, and text-free audit events.
 - A dark-first editorial interface with layered evidence surfaces, gold/emerald trust states, a polished light theme, responsive mobile layout, keyboard focus states, and an IZAQ / 4UP design-engineering signature.
 - Prompt starters, auto-growing questions, toast feedback, `/` question focus, and `Ctrl/Cmd + K` library search.
@@ -172,10 +173,23 @@ lock, creates the migration ledger, and applies each unapplied schema version ex
 PostgreSQL search path uses a GIN index and native full-text ranking while preserving the same
 tenant, classification, lifecycle, and citation boundaries as SQLite.
 
+Each process uses a bounded connection pool (one warm connection and five maximum by default).
+AWS/ECS can inject the RDS host, database, username, and password as separate environment values;
+EvidenceDesk encodes them into the connection URL internally. `GET /ready` checks both the chosen
+database and original store, while `GET /health` remains the lightweight process/database check.
+
 GitHub CI starts PostgreSQL 16 and tests migration, registration, login, ingestion, original-file
 streaming, retrieval, citation generation, and cross-workspace isolation. This is integration
-evidence, not a claim that EvidenceDesk has operated an AWS RDS production workload. Connection
-pooling, backup/restore drills, and AWS infrastructure acceptance remain launch gates.
+evidence, not a claim that EvidenceDesk has operated an AWS RDS production workload. A guarded
+SQLite/local-to-PostgreSQL/S3 copy tool and an unapplied CloudFormation data-plane template are
+included; AWS acceptance and backup/restore drills remain launch gates. Follow the
+[AWS migration and rollback runbook](docs/aws-deployment.md).
+
+The migration command is a read-only integrity preflight unless `--execute` is supplied:
+
+```bash
+python -m app.migrate_data --source-db data/evidencedesk.db --source-originals data/originals
+```
 
 ### Optional server-managed model synthesis
 
@@ -310,4 +324,5 @@ storage, page citations, retrieval expansion, scope, lifecycle and bulk operatio
 and reports, feedback and metrics, tenant/classification isolation, conversation ownership,
 authorization, traversal protection, OIDC claim mapping, upload validation, refusal,
 prompt-injection handling, invalid model citations/claims, provider timeout, quota exhaustion,
-key non-disclosure, and usage-metadata privacy.
+key non-disclosure, usage-metadata privacy, migration integrity preflight, readiness checks, and
+private/recoverable AWS template defaults.

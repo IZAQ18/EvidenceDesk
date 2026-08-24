@@ -14,7 +14,7 @@ the organization has not supplied enough information.
 | Gate | Measurable definition | Current state |
 | --- | --- | --- |
 | Account safety | Individual sign-in, revocable sessions, CSRF protection, tenant isolation | Foundation implemented; email verification and recovery pending |
-| Durable data | Managed PostgreSQL, private object storage, backups, restore exercise | PostgreSQL adapter/migrations and private S3 adapter implemented; PostgreSQL 16 path tested in CI. AWS integration, pooling, backups, and restore exercise pending |
+| Durable data | Managed PostgreSQL, private object storage, backups, restore exercise | Adapters, bounded pooling, readiness checks, guarded copy tool, and unapplied AWS data-plane template implemented; PostgreSQL 16 path tested in CI. Managed-resource acceptance and restore exercise pending |
 | Ingestion | Async processing, malware scan, progress, resilient OCR and table handling | Durable jobs, visible progress, bounded retry, integrity verification, and lease recovery implemented; isolated workers, malware scanning, and advanced table extraction pending |
 | Answer quality | Organization-specific gold set, >=95% retrieval success, >=98% valid citations | Hybrid local semantic retrieval, reranking, diagnostics, and an 8-case synthetic regression benchmark implemented; customer-specific held-out evaluation pending |
 | Customer AI | Server-managed provider, quotas, cost controls, no customer key required | Gateway, fallbacks, usage controls, and fake-provider tests implemented; provider/privacy acceptance and live configuration pending |
@@ -108,3 +108,22 @@ The gateway remains disabled on the public Render pilot. Enabling it requires a 
 key, current provider prices, a deliberate application ceiling, a provider-side hard budget,
 privacy/subprocessor review, and customer-specific evaluation. Mechanical claim checks are not a
 proof that every paraphrase is semantically entailed.
+
+## Milestone 5 evidence
+
+The durable-data deployment seam now provides:
+
+- a bounded PostgreSQL connection pool with startup failure and shutdown cleanup;
+- a public, low-detail readiness endpoint that checks the database and original storage;
+- separate RDS component-secret configuration with safe credential encoding and required
+  production TLS;
+- a read-only-by-default migration preflight that verifies local original sizes and SHA-256
+  digests;
+- an explicit copy mode that requires idle ingestion, an empty PostgreSQL target, private S3,
+  unique-prefix object copies, S3 round trips, a single database transaction, and final row-count
+  verification; and
+- an unapplied CloudFormation data-plane template with private RDS networking, managed secrets,
+  encrypted/versioned S3, backups, retain/snapshot behavior, and scoped ECS data access.
+
+No AWS resources were created by this milestone. Public registration remains disabled until a
+managed target is created, migration and restore acceptance pass, and account recovery is ready.

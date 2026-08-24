@@ -5,8 +5,9 @@ from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from urllib.parse import parse_qs, quote, urlsplit
 
-from pydantic import BaseModel, Field, SecretStr, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Classification = Literal["public", "internal", "confidential"]
@@ -37,6 +38,15 @@ class Settings(BaseSettings):
     database_backend: Literal["sqlite", "postgres"] = "sqlite"
     db_path: Path = Path("data/evidencedesk.db")
     database_url: SecretStr | None = None
+    database_host: str | None = None
+    database_port: int = Field(default=5432, ge=1, le=65535)
+    database_name: str | None = Field(default=None, pattern=r"^[A-Za-z_][A-Za-z0-9_-]{0,62}$")
+    database_user: str | None = None
+    database_password: SecretStr | None = None
+    database_sslmode: Literal["require", "verify-ca", "verify-full"] = "require"
+    database_pool_min_size: int = Field(default=1, ge=1, le=20)
+    database_pool_max_size: int = Field(default=5, ge=1, le=100)
+    database_pool_timeout_seconds: float = Field(default=10.0, ge=1.0, le=60.0)
     document_store_path: Path = Path("data/originals")
     document_store_backend: Literal["local", "s3"] = "local"
     s3_bucket: str | None = Field(default=None, min_length=3, max_length=63)
@@ -85,6 +95,12 @@ class Settings(BaseSettings):
     checkout_url: str | None = None
     payment_webhook_secret: SecretStr | None = None
     allowed_hosts: str = "localhost,127.0.0.1,testserver,*.onrender.com,*.koyeb.app"
+
+    @model_validator(mode="after")
+    def validate_pool_size(self) -> Settings:
+        if self.database_pool_max_size < self.database_pool_min_size:
+            raise ValueError("Database pool max size must be at least the min size")
+        return self
 
     @field_validator("api_keys", mode="before")
     @classmethod
@@ -169,15 +185,52 @@ class Settings(BaseSettings):
                 raise RuntimeError("Production S3 endpoints must use HTTPS")
 
     def validate_database(self) -> None:
-        if self.database_backend == "postgres" and self.database_url is None:
-            raise RuntimeError(
-                "EVIDENCEDESK_DATABASE_URL is required for PostgreSQL"
-            )
-        if self.database_backend == "postgres" and self.env == "production":
-            url = self.database_url.get_secret_value() if self.database_url else ""
-            secure_modes = ("sslmode=require", "sslmode=verify-ca", "sslmode=verify-full")
-            if not any(mode in url.lower() for mode in secure_modes):
+        if self.database_backend != "postgres":
+            return
+        if self.database_url is None:
+            components: dict[str, str | None] = {
+                "EVIDENCEDESK_DATABASE_HOST": self.database_host,
+                "EVIDENCEDESK_DATABASE_NAME": self.database_name,
+                "EVIDENCEDESK_DATABASE_USER": self.database_user,
+                "EVIDENCEDESK_DATABASE_PASSWORD": (
+                    self.database_password.get_secret_value()
+                    if self.database_password is not None
+                    else None
+                ),
+            }
+            missing = [name for name, value in components.items() if not value or not value.strip()]
+            if missing:
+                raise RuntimeError(
+                    "EVIDENCEDESK_DATABASE_URL or complete PostgreSQL components are required: "
+                    + ", ".join(missing)
+                )
+            assert self.database_host
+            if any(character in self.database_host for character in "/?#@ "):
+                raise RuntimeError("PostgreSQL host contains invalid characters")
+        if self.env == "production":
+            query = parse_qs(urlsplit(self.resolved_database_url()).query)
+            secure_modes = {"require", "verify-ca", "verify-full"}
+            if not set(value.lower() for value in query.get("sslmode", [])) & secure_modes:
                 raise RuntimeError("Production PostgreSQL connections must require TLS")
+
+    def resolved_database_url(self) -> str:
+        if self.database_url is not None:
+            return self.database_url.get_secret_value()
+        if not all(
+            [
+                self.database_host,
+                self.database_name,
+                self.database_user,
+                self.database_password,
+            ]
+        ):
+            raise RuntimeError("PostgreSQL connection configuration is incomplete")
+        password = self.database_password.get_secret_value()
+        return (
+            f"postgresql://{quote(self.database_user or '', safe='')}:"
+            f"{quote(password, safe='')}@{self.database_host}:{self.database_port}/"
+            f"{quote(self.database_name or '', safe='')}?sslmode={self.database_sslmode}"
+        )
 
     def validate_model_gateway(self) -> None:
         if not self.model_gateway_enabled:

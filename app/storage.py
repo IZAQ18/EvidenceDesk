@@ -27,6 +27,8 @@ class OriginalStorage(Protocol):
 
     def delete(self, reference: str | None) -> None: ...
 
+    def ping(self) -> bool: ...
+
 
 def _safe_tenant(tenant_id: str) -> str:
     safe = "".join(char for char in tenant_id if char.isalnum() or char in "-_")[:80]
@@ -104,6 +106,9 @@ class LocalDocumentStorage:
         path = self._resolve(reference)
         if path.is_file():
             path.unlink()
+
+    def ping(self) -> bool:
+        return self.root.is_dir() and os.access(self.root, os.R_OK | os.W_OK)
 
 
 class S3DocumentStorage:
@@ -206,6 +211,10 @@ class S3DocumentStorage:
         self.client.delete_object(
             Bucket=self.bucket, Key=self._key(reference), **self._owner()
         )
+
+    def ping(self) -> bool:
+        self.client.head_bucket(Bucket=self.bucket, **self._owner())
+        return True
 
 
 def build_document_storage(settings: Settings) -> OriginalStorage:

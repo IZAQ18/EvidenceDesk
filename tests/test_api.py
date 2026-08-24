@@ -9,6 +9,12 @@ def test_health_and_security_headers(client):
     assert response.json()["status"] == "ok"
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["x-frame-options"] == "DENY"
+    readiness = client.get("/ready")
+    assert readiness.status_code == 200
+    assert readiness.json() == {
+        "status": "ready",
+        "checks": {"database": True, "original_storage": True},
+    }
 
 
 def test_authentication_is_required(client):

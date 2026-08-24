@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import time
 
@@ -7,10 +8,42 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Settings
+from app.db import Database, PostgresDatabase, build_database
+from app.ingestion import ExtractedDocument, ExtractedPage, chunk_pages
 from app.main import create_app
+from app.migrate_data import migrate
+from app.models import Principal
+from app.repository import Repository
+from app.storage import LocalDocumentStorage
 
 POSTGRES_URL = os.getenv("EVIDENCEDESK_TEST_POSTGRES_URL")
 pytestmark = pytest.mark.skipif(not POSTGRES_URL, reason="PostgreSQL integration URL not configured")
+
+
+class MemoryS3Storage:
+    objects: dict[str, bytes] = {}
+
+    def __init__(self, *, prefix: str, **_: object):
+        self.prefix = prefix
+
+    def save(
+        self,
+        tenant_id: str,
+        document_id: str,
+        extension: str,
+        content: bytes,
+        content_type: str | None = None,
+    ) -> str:
+        del content_type
+        reference = f"s3:{self.prefix}/{tenant_id}/{document_id}{extension}"
+        self.objects[reference] = content
+        return reference
+
+    def stream(self, reference: str):
+        return [self.objects[reference]]
+
+    def ping(self) -> bool:
+        return True
 
 
 def _register(client: TestClient, email: str, name: str) -> dict:
@@ -124,3 +157,91 @@ def test_postgres_accounts_ingestion_retrieval_and_tenant_isolation(tmp_path):
         assert login.json()["workspace_id"] == first["workspace_id"]
         assert len(client.get("/v1/documents").json()) == 1
         assert client.get("/health").json()["status"] == "ok"
+        assert client.get("/ready").json() == {
+            "status": "ready",
+            "checks": {"database": True, "original_storage": True},
+        }
+
+
+def test_sqlite_and_local_originals_migrate_to_postgres_and_s3(tmp_path, monkeypatch):
+    settings = Settings(
+        _env_file=None,
+        env="test",
+        database_backend="postgres",
+        database_url=POSTGRES_URL,
+        document_store_backend="s3",
+        s3_bucket="evidencedesk-integration",
+        ingestion_worker_enabled=False,
+    )
+    target = build_database(settings)
+    assert isinstance(target, PostgresDatabase)
+    target.initialize()
+    with target.connect() as connection:
+        connection.execute(
+            """TRUNCATE model_usage_events, model_usage_daily,
+                      auth_sessions, workspace_members, workspaces, users,
+                      payment_events, audit_events, feedback, answer_diagnostics,
+                      messages, conversations, ingestion_jobs, document_pages,
+                      chunks, documents RESTART IDENTITY CASCADE"""
+        )
+    target.close()
+
+    source_path = tmp_path / "migration-source.db"
+    originals_path = tmp_path / "migration-originals"
+    source = Database(source_path)
+    source.initialize()
+    repository = Repository(source)
+    originals = LocalDocumentStorage(originals_path)
+    content = b"Synthetic staff receive twenty days of annual leave."
+    extracted = ExtractedDocument(
+        filename="synthetic-leave.txt",
+        content_type="text/plain",
+        content=content,
+        pages=[ExtractedPage(page_number=1, text=content.decode())],
+        sha256=hashlib.sha256(content).hexdigest(),
+        extraction_method="postgres-migration-integration",
+    )
+    principal = Principal(
+        subject="migration-admin",
+        tenant_id="migration-workspace",
+        role="admin",
+        clearances=["public", "internal", "confidential"],
+    )
+    reference = originals.save(
+        principal.tenant_id, "migration-document", ".txt", content, "text/plain"
+    )
+    repository.add_document(
+        extracted,
+        chunk_pages(extracted.pages),
+        "internal",
+        "Synthetic integration source",
+        principal,
+        document_id="migration-document",
+        storage_path=reference,
+    )
+
+    MemoryS3Storage.objects = {}
+    monkeypatch.setattr("app.migrate_data.S3DocumentStorage", MemoryS3Storage)
+    report = migrate(
+        source_db_path=source_path,
+        source_originals_path=originals_path,
+        settings=settings,
+        execute=True,
+        migration_id="ci_test",
+    )
+    assert report["verified"] is True
+    assert report["target_rows"]["documents"] == 1
+    assert report["target_rows"]["chunks"] == 1
+    assert report["target_prefix"] == "evidencedesk/originals/migration-ci_test"
+    assert list(MemoryS3Storage.objects.values()) == [content]
+
+    verification = build_database(settings)
+    verification.initialize()
+    with verification.connect() as connection:
+        document = connection.execute(
+            "SELECT storage_path, sha256 FROM documents WHERE id = ?",
+            ("migration-document",),
+        ).fetchone()
+    verification.close()
+    assert document["storage_path"].startswith("s3:evidencedesk/originals/migration-ci_test/")
+    assert document["sha256"] == hashlib.sha256(content).hexdigest()

@@ -29,6 +29,10 @@ class FakeS3Client:
         self.put_calls: list[dict] = []
         self.delete_calls: list[dict] = []
         self.last_body: FakeBody | None = None
+        self.head_calls: list[dict] = []
+
+    def head_bucket(self, **kwargs):
+        self.head_calls.append(kwargs)
 
     def put_object(self, **kwargs):
         self.put_calls.append(kwargs)
@@ -78,6 +82,8 @@ def test_s3_storage_encrypts_streams_and_deletes_private_objects():
     assert uploaded["ServerSideEncryption"] == "AES256"
     assert uploaded["ExpectedBucketOwner"] == "123456789012"
     assert "ACL" not in uploaded
+    assert storage.ping() is True
+    assert client.head_calls[0]["ExpectedBucketOwner"] == "123456789012"
 
     assert b"".join(storage.stream(reference)) == b"private pdf bytes"
     assert client.last_body and client.last_body.closed is True
@@ -128,3 +134,8 @@ def test_s3_configuration_fails_closed(tmp_path):
         S3DocumentStorage(
             bucket="evidencedesk-private", prefix="../escape", client=FakeS3Client()
         )
+
+
+def test_local_storage_readiness(tmp_path):
+    storage = LocalDocumentStorage(tmp_path / "originals")
+    assert storage.ping() is True

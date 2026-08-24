@@ -15,6 +15,6 @@
 | Original-file path attack | Generated storage paths, filename separation, containment checks, atomic writes, authorized download endpoint | Encrypted S3 with per-tenant prefixes, restrictive IAM, object scanning, and retention controls |
 | Sensitive data in logs | Log identifiers and counts, not questions or document text | Central redaction rules, access controls, retention policy, audits |
 | Dependency/parser vulnerability | Minimal dependencies, CI tests | Pin/scan dependencies and container images; patch SLA |
-| Local database/original loss | Persistent Docker volume and explicit local storage boundary | Encrypted managed database/object storage, versioning, backups, and restore drills |
+| Local database/original loss | Persistent Docker volume; guarded integrity preflight/copy tool; encrypted, versioned, retained AWS data-plane template | Provision and accept the managed target, then prove snapshot/database and object-version restores |
 
 Security controls here are illustrative engineering measures. They do not constitute a certification or a guarantee.
