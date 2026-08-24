@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import json
 import re
-import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import uuid4
 
 from app.config import Classification
-from app.db import Database
+from app.db import DatabaseLike
 from app.ingestion import ExtractedDocument, TextChunk, has_injection_language
 from app.models import Principal
 from app.payments import PaymentEvent
@@ -63,7 +62,7 @@ def _expanded_terms(question: str) -> tuple[list[str], set[str]]:
 
 
 class Repository:
-    def __init__(self, database: Database):
+    def __init__(self, database: DatabaseLike):
         self.database = database
 
     def audit(
@@ -146,7 +145,7 @@ class Repository:
                         (document_id, page.page_number, page.text, int(page.ocr_used)),
                     )
                 for index, chunk in enumerate(chunks):
-                    cursor = connection.execute(
+                    connection.execute(
                         """INSERT INTO chunks
                            (document_id, tenant_id, chunk_index, text, classification,
                             injection_flag, page_number)
@@ -161,18 +160,26 @@ class Repository:
                             chunk.page_number,
                         ),
                     )
-                    connection.execute(
-                        "INSERT INTO chunks_fts(rowid, text) VALUES (?, ?)",
-                        (cursor.lastrowid, chunk.text),
-                    )
+                    if self.database.dialect == "sqlite":
+                        chunk_id = connection.execute(
+                            "SELECT last_insert_rowid() AS id"
+                        ).fetchone()["id"]
+                        connection.execute(
+                            "INSERT INTO chunks_fts(rowid, text) VALUES (?, ?)",
+                            (chunk_id, chunk.text),
+                        )
                 if supersedes_document_id:
                     connection.execute(
                         """UPDATE documents SET status = 'superseded'
                            WHERE id = ? AND tenant_id = ? AND status = 'active'""",
                         (supersedes_document_id, principal.tenant_id),
                     )
-        except sqlite3.IntegrityError as exc:
-            if "documents.tenant_id, documents.sha256" in str(exc):
+        except Exception as exc:
+            constraint = getattr(getattr(exc, "diag", None), "constraint_name", None)
+            if (
+                "documents.tenant_id, documents.sha256" in str(exc)
+                or constraint == "idx_documents_dedupe"
+            ):
                 raise DuplicateDocumentError from exc
             raise
         return document_id
@@ -233,14 +240,15 @@ class Repository:
         if not document:
             return False, None
         with self.database.connect() as connection:
-            chunk_ids = [
-                row[0]
-                for row in connection.execute(
-                    "SELECT id FROM chunks WHERE document_id = ?", (document_id,)
-                )
-            ]
-            for chunk_id in chunk_ids:
-                connection.execute("DELETE FROM chunks_fts WHERE rowid = ?", (chunk_id,))
+            if self.database.dialect == "sqlite":
+                chunk_ids = [
+                    row["id"]
+                    for row in connection.execute(
+                        "SELECT id FROM chunks WHERE document_id = ?", (document_id,)
+                    )
+                ]
+                for chunk_id in chunk_ids:
+                    connection.execute("DELETE FROM chunks_fts WHERE rowid = ?", (chunk_id,))
             connection.execute("DELETE FROM documents WHERE id = ?", (document_id,))
         return True, document.get("storage_path")
 
@@ -254,7 +262,6 @@ class Repository:
         terms, exact_terms = _expanded_terms(question)
         if not terms:
             return []
-        fts_query = " OR ".join(f'"{term.replace(chr(34), "")}"' for term in terms)
         placeholders = ",".join("?" for _ in principal.clearances)
         scope_clause = ""
         scope_parameters: tuple[str, ...] = ()
@@ -263,23 +270,47 @@ class Repository:
             scope_clause = f"AND c.document_id IN ({scope_placeholders})"
             scope_parameters = tuple(document_ids)
         candidate_limit = max(top_k * 6, 24)
-        query = f"""SELECT c.id AS chunk_id, c.document_id, d.filename, d.source,
-                           c.classification, c.text, c.injection_flag, c.page_number,
-                           bm25(chunks_fts) AS score
-                    FROM chunks_fts
-                    JOIN chunks c ON c.id = chunks_fts.rowid
-                    JOIN documents d ON d.id = c.document_id
-                    WHERE chunks_fts MATCH ? AND c.tenant_id = ?
-                      AND c.classification IN ({placeholders}) AND d.status = 'active'
-                      {scope_clause}
-                    ORDER BY score ASC LIMIT ?"""  # noqa: S608
-        parameters = (
-            fts_query,
-            principal.tenant_id,
-            *principal.clearances,
-            *scope_parameters,
-            candidate_limit,
-        )
+        fts_query = " OR ".join(f'"{term.replace(chr(34), "")}"' for term in terms)
+        if self.database.dialect == "postgres":
+            query = f"""SELECT c.id AS chunk_id, c.document_id, d.filename, d.source,
+                               c.classification, c.text, c.injection_flag, c.page_number,
+                               ts_rank_cd(
+                                   to_tsvector('simple', c.text),
+                                   websearch_to_tsquery('simple', ?)
+                               ) AS score
+                        FROM chunks c JOIN documents d ON d.id = c.document_id
+                        WHERE to_tsvector('simple', c.text)
+                              @@ websearch_to_tsquery('simple', ?)
+                          AND c.tenant_id = ?
+                          AND c.classification IN ({placeholders})
+                          AND d.status = 'active' {scope_clause}
+                        ORDER BY score DESC LIMIT ?"""  # noqa: S608
+            parameters = (
+                fts_query,
+                fts_query,
+                principal.tenant_id,
+                *principal.clearances,
+                *scope_parameters,
+                candidate_limit,
+            )
+        else:
+            query = f"""SELECT c.id AS chunk_id, c.document_id, d.filename, d.source,
+                               c.classification, c.text, c.injection_flag, c.page_number,
+                               bm25(chunks_fts) AS score
+                        FROM chunks_fts
+                        JOIN chunks c ON c.id = chunks_fts.rowid
+                        JOIN documents d ON d.id = c.document_id
+                        WHERE chunks_fts MATCH ? AND c.tenant_id = ?
+                          AND c.classification IN ({placeholders}) AND d.status = 'active'
+                          {scope_clause}
+                        ORDER BY score ASC LIMIT ?"""  # noqa: S608
+            parameters = (
+                fts_query,
+                principal.tenant_id,
+                *principal.clearances,
+                *scope_parameters,
+                candidate_limit,
+            )
         with self.database.connect() as connection:
             rows = connection.execute(query, parameters).fetchall()
 
@@ -484,15 +515,16 @@ class Repository:
         with self.database.connect() as connection:
             documents = connection.execute(
                 """SELECT COUNT(*) total,
-                          SUM(status='active') active,
-                          SUM(status='archived') archived,
-                          SUM(extraction_method LIKE '%ocr%') ocr_documents,
+                          SUM(CASE WHEN status='active' THEN 1 ELSE 0 END) active,
+                          SUM(CASE WHEN status='archived' THEN 1 ELSE 0 END) archived,
+                          SUM(CASE WHEN extraction_method LIKE '%ocr%' THEN 1 ELSE 0 END) ocr_documents,
                           COALESCE(SUM(word_count),0) words
                    FROM documents WHERE tenant_id = ?""",
                 (principal.tenant_id,),
             ).fetchone()
             answers = connection.execute(
-                """SELECT COUNT(*) total, COALESCE(SUM(grounded=0),0) refused
+                """SELECT COUNT(*) total,
+                          COALESCE(SUM(CASE WHEN grounded=0 THEN 1 ELSE 0 END),0) refused
                    FROM messages m JOIN conversations c ON c.id=m.conversation_id
                    WHERE c.tenant_id = ? AND m.role='assistant'""",
                 (principal.tenant_id,),
@@ -539,11 +571,20 @@ class Repository:
         self, event: PaymentEvent, *, tenant_id: str, provider: str = "lemonsqueezy"
     ) -> bool:
         with self.database.connect() as connection:
-            cursor = connection.execute(
-                """INSERT OR IGNORE INTO payment_events(
+            insert = (
+                """INSERT INTO payment_events(
                        event_key, tenant_id, provider, event_name, provider_id, status,
                        amount_minor, currency, customer_hint, test_mode, created_at
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(event_key) DO NOTHING"""
+                if self.database.dialect == "postgres"
+                else """INSERT OR IGNORE INTO payment_events(
+                       event_key, tenant_id, provider, event_name, provider_id, status,
+                       amount_minor, currency, customer_hint, test_mode, created_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+            )
+            cursor = connection.execute(
+                insert,
                 (
                     event.event_key,
                     tenant_id,

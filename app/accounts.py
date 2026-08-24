@@ -5,12 +5,13 @@ import hashlib
 import hmac
 import json
 import secrets
-import sqlite3
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import uuid4
 
-from app.db import Database
+from app.db import DatabaseLike
 from app.models import AccountOut, Principal
 
 ACCOUNT_COOKIE = "evidencedesk_session"
@@ -109,7 +110,7 @@ class AccountSession:
 class AccountStore:
     """Small account boundary that can later be replaced by a managed identity service."""
 
-    def __init__(self, database: Database, session_hours: int):
+    def __init__(self, database: DatabaseLike, session_hours: int):
         self.database = database
         self.session_hours = session_hours
 
@@ -152,8 +153,12 @@ class AccountStore:
                 self._insert_session(
                     connection, token, csrf_token, user_id, workspace_id, now, expires_at
                 )
-        except sqlite3.IntegrityError as exc:
-            if "users.email" in str(exc).lower():
+        except Exception as exc:
+            constraint = getattr(getattr(exc, "diag", None), "constraint_name", None)
+            if "users.email" in str(exc).lower() or constraint in {
+                "users_email_key",
+                "idx_users_email_ci",
+            }:
                 raise AccountExistsError("An account with this email already exists") from exc
             raise
         return AccountSession(
@@ -171,16 +176,21 @@ class AccountStore:
         )
 
     def login(self, email: str, password: str) -> AccountSession | None:
+        email_predicate = (
+            "LOWER(u.email) = LOWER(?)"
+            if self.database.dialect == "postgres"
+            else "u.email = ? COLLATE NOCASE"
+        )
         with self.database.connect() as connection:
             row = connection.execute(
-                """SELECT u.id user_id, u.email, u.display_name, u.password_hash, u.status,
+                f"""SELECT u.id user_id, u.email, u.display_name, u.password_hash, u.status,
                           w.id workspace_id, w.name workspace_name, w.plan,
                           m.role, m.clearances_json
                    FROM users u
                    LEFT JOIN workspace_members m ON m.user_id = u.id
                    LEFT JOIN workspaces w ON w.id = m.workspace_id
-                   WHERE u.email = ? COLLATE NOCASE
-                   ORDER BY m.created_at LIMIT 1""",
+                   WHERE {email_predicate}
+                   ORDER BY m.created_at LIMIT 1""",  # noqa: S608
                 (email,),
             ).fetchone()
         encoded = row["password_hash"] if row else _DUMMY_PASSWORD_HASH
@@ -211,7 +221,7 @@ class AccountStore:
 
     @staticmethod
     def _insert_session(
-        connection: sqlite3.Connection,
+        connection: Any,
         token: str,
         csrf_token: str,
         user_id: str,
@@ -269,7 +279,7 @@ class AccountStore:
 
     @staticmethod
     def _from_row(
-        row: sqlite3.Row, token: str, csrf_token: str, expires_at: datetime
+        row: Mapping[str, Any], token: str, csrf_token: str, expires_at: datetime
     ) -> AccountSession:
         return AccountSession(
             token=token,

@@ -5,7 +5,6 @@ import hmac
 import json
 import logging
 import re
-import sqlite3
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -27,7 +26,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.accounts import ACCOUNT_COOKIE, AccountExistsError, AccountStore, account_page
 from app.config import Classification, Settings, get_settings
-from app.db import Database
+from app.db import build_database
 from app.ingestion import (
     ExtractedDocument,
     ExtractedPage,
@@ -139,7 +138,7 @@ def _seed_demo_documents(
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     resolved_settings = settings or get_settings()
-    database = Database(resolved_settings.db_path)
+    database = build_database(resolved_settings)
     repository = Repository(database)
     storage = build_document_storage(resolved_settings)
     workflow = AnswerWorkflow(repository)
@@ -243,7 +242,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             with database.connect() as connection:
                 connection.execute("SELECT 1").fetchone()
-        except sqlite3.Error as exc:
+        except Exception as exc:
             raise HTTPException(status_code=503, detail="Database unavailable") from exc
         return {"status": "ok", "service": "evidencedesk", "version": "0.9.0"}
 

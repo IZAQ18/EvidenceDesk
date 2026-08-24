@@ -33,7 +33,9 @@ class Settings(BaseSettings):
     oidc_tenant_claim: str = "tenant_id"
     oidc_role_claim: str = "role"
     oidc_clearances_claim: str = "clearances"
+    database_backend: Literal["sqlite", "postgres"] = "sqlite"
     db_path: Path = Path("data/evidencedesk.db")
+    database_url: SecretStr | None = None
     document_store_path: Path = Path("data/originals")
     document_store_backend: Literal["local", "s3"] = "local"
     s3_bucket: str | None = Field(default=None, min_length=3, max_length=63)
@@ -140,6 +142,17 @@ class Settings(BaseSettings):
         if self.env == "production" and self.s3_endpoint_url:
             if not self.s3_endpoint_url.startswith("https://"):
                 raise RuntimeError("Production S3 endpoints must use HTTPS")
+
+    def validate_database(self) -> None:
+        if self.database_backend == "postgres" and self.database_url is None:
+            raise RuntimeError(
+                "EVIDENCEDESK_DATABASE_URL is required for PostgreSQL"
+            )
+        if self.database_backend == "postgres" and self.env == "production":
+            url = self.database_url.get_secret_value() if self.database_url else ""
+            secure_modes = ("sslmode=require", "sslmode=verify-ca", "sslmode=verify-full")
+            if not any(mode in url.lower() for mode in secure_modes):
+                raise RuntimeError("Production PostgreSQL connections must require TLS")
 
     def resolved_allowed_hosts(self) -> list[str]:
         return [host.strip() for host in self.allowed_hosts.split(",") if host.strip()]

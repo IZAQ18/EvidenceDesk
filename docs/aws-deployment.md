@@ -47,10 +47,23 @@ when a customer-managed key is used. The bucket should block all public access, 
 reject unencrypted writes, enable versioning where recovery rules justify it, and record access
 events according to the organization’s retention policy.
 
+## PostgreSQL deployment seam
+
+The repository now also supports PostgreSQL through `EVIDENCEDESK_DATABASE_BACKEND=postgres` and a
+secret `EVIDENCEDESK_DATABASE_URL`. Versioned schema migrations run under a transaction-scoped
+advisory lock, and PostgreSQL retrieval uses a GIN full-text index. GitHub CI launches PostgreSQL
+16 and validates accounts, ingestion, original streaming, grounded retrieval, citations, and
+cross-tenant isolation through the real driver.
+
+For RDS, use a Secrets Manager-injected URL with `sslmode=verify-full`, an appropriate CA bundle,
+private networking, security-group restrictions, encryption at rest, automated backups, and a
+separate migration/rollback procedure. The CI integration does not constitute an RDS deployment
+or production-scale operating claim.
+
 ## Remaining required code and infrastructure
 
-Replace the SQLite repository with PostgreSQL without changing API contracts. Add Alembic-style
-managed migrations. Replace the in-memory limiter with edge throttling or Redis. Connect the
+Add a bounded PostgreSQL connection pool and run backup/restore acceptance against the selected
+RDS configuration. Replace the in-memory limiter with edge throttling or Redis. Connect the
 existing JWT validator to the chosen identity provider and verify real claims, key rotation,
 logout, and failure behavior. Put newly uploaded objects into quarantine and run malware scanning,
 extraction, and OCR outside the API process with idempotent jobs, status callbacks, dead-letter
@@ -59,8 +72,8 @@ gateway if generative synthesis is enabled.
 
 ## Release sequence
 
-1. Provision a private development S3 bucket and validate the implemented adapter with IaC and a
-   least-privilege ECS task role; build the PostgreSQL adapter.
+1. Provision private development S3 and RDS resources with IaC; validate the implemented adapters
+   with a least-privilege ECS task role, TLS, migrations, monitoring, and rollback.
 2. Import a non-sensitive evaluation corpus and pass retrieval, authorization, and restore tests.
 3. Run a time-boxed internal pilot with monitoring and a documented rollback.
 4. Complete security/privacy review and operational readiness checks before broader use.

@@ -21,6 +21,9 @@ This is an intentionally honest portfolio MVP. It runs locally and demonstrates 
 - A replaceable original-storage boundary with backward-compatible local files and an optional
   private S3 backend using tenant-scoped object keys, authenticated streaming, server-side
   encryption, KMS support, and expected-bucket-owner protection.
+- A dual database boundary: portable SQLite for local/pilot use and PostgreSQL with versioned,
+  advisory-lock-protected schema migrations and PostgreSQL full-text retrieval for durable
+  multi-instance deployments. CI exercises the complete account-to-citation path on PostgreSQL 16.
 - Rate limits, upload limits, security headers, safe file storage, prompt-injection flags, and text-free audit events.
 - A dark-first editorial interface with layered evidence surfaces, gold/emerald trust states, a polished light theme, responsive mobile layout, keyboard focus states, and an IZAQ / 4UP design-engineering signature.
 - Prompt starters, auto-growing questions, toast feedback, `/` question focus, and `Ctrl/Cmd + K` library search.
@@ -123,6 +126,26 @@ credential provider chain, so ECS should use a least-privilege task role. Object
 public or exposed with a direct browser URL; EvidenceDesk authorizes the request first and then
 streams the original through the application. This adapter has local automated tests but has not
 yet been represented as a deployed AWS production workload.
+
+### Configure PostgreSQL
+
+SQLite remains the zero-setup local default. The durable database adapter is selected explicitly:
+
+```dotenv
+EVIDENCEDESK_DATABASE_BACKEND=postgres
+EVIDENCEDESK_DATABASE_URL=postgresql://user:password@host:5432/evidencedesk?sslmode=verify-full
+```
+
+The URL is handled as a secret and is never returned by an API. Production configuration fails
+closed unless PostgreSQL TLS is required. Startup takes a transaction-scoped PostgreSQL advisory
+lock, creates the migration ledger, and applies each unapplied schema version exactly once. The
+PostgreSQL search path uses a GIN index and native full-text ranking while preserving the same
+tenant, classification, lifecycle, and citation boundaries as SQLite.
+
+GitHub CI starts PostgreSQL 16 and tests migration, registration, login, ingestion, original-file
+streaming, retrieval, citation generation, and cross-workspace isolation. This is integration
+evidence, not a claim that EvidenceDesk has operated an AWS RDS production workload. Connection
+pooling, backup/restore drills, and AWS infrastructure acceptance remain launch gates.
 
 ### Docker
 

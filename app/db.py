@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
+
+from app.config import Settings
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -166,8 +170,158 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_expiry ON auth_sessions(expires_at);
 """
 
+POSTGRES_MIGRATIONS: tuple[tuple[int, tuple[str, ...]], ...] = (
+    (
+        1,
+        (
+            """CREATE TABLE IF NOT EXISTS documents (
+                id TEXT PRIMARY KEY,
+                tenant_id TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                content_type TEXT NOT NULL,
+                size_bytes BIGINT NOT NULL,
+                sha256 TEXT NOT NULL,
+                source TEXT,
+                classification TEXT NOT NULL CHECK (classification IN ('public','internal','confidential')),
+                created_at TEXT NOT NULL,
+                created_by TEXT NOT NULL,
+                page_count INTEGER NOT NULL DEFAULT 1,
+                word_count INTEGER NOT NULL DEFAULT 0,
+                extraction_method TEXT NOT NULL DEFAULT 'legacy',
+                extraction_warning TEXT,
+                collection TEXT,
+                version TEXT,
+                effective_date TEXT,
+                expires_at TEXT,
+                status TEXT NOT NULL DEFAULT 'active',
+                storage_path TEXT
+            )""",
+            "CREATE INDEX IF NOT EXISTS idx_documents_tenant ON documents(tenant_id, created_at DESC)",
+            """CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_dedupe
+               ON documents(tenant_id, sha256, classification)""",
+            """CREATE TABLE IF NOT EXISTS chunks (
+                id BIGSERIAL PRIMARY KEY,
+                document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                tenant_id TEXT NOT NULL,
+                chunk_index INTEGER NOT NULL,
+                text TEXT NOT NULL,
+                classification TEXT NOT NULL,
+                injection_flag INTEGER NOT NULL DEFAULT 0,
+                page_number INTEGER,
+                UNIQUE(document_id, chunk_index)
+            )""",
+            "CREATE INDEX IF NOT EXISTS idx_chunks_policy ON chunks(tenant_id, classification, document_id)",
+            """CREATE INDEX IF NOT EXISTS idx_chunks_search
+               ON chunks USING GIN (to_tsvector('simple', text))""",
+            """CREATE TABLE IF NOT EXISTS document_pages (
+                document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                page_number INTEGER NOT NULL,
+                text TEXT NOT NULL,
+                ocr_used INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(document_id, page_number)
+            )""",
+            """CREATE TABLE IF NOT EXISTS conversations (
+                id TEXT PRIMARY KEY,
+                tenant_id TEXT NOT NULL,
+                owner_subject TEXT NOT NULL,
+                title TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )""",
+            """CREATE INDEX IF NOT EXISTS idx_conversations_owner
+               ON conversations(tenant_id, owner_subject, updated_at DESC)""",
+            """CREATE TABLE IF NOT EXISTS messages (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                role TEXT NOT NULL CHECK (role IN ('user','assistant')),
+                content TEXT NOT NULL,
+                grounded INTEGER,
+                evidence_quality TEXT,
+                citations_json TEXT NOT NULL DEFAULT '[]',
+                workflow_json TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL
+            )""",
+            "CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, created_at)",
+            """CREATE TABLE IF NOT EXISTS feedback (
+                id TEXT PRIMARY KEY,
+                tenant_id TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+                category TEXT NOT NULL,
+                comment TEXT,
+                created_at TEXT NOT NULL,
+                UNIQUE(subject, message_id)
+            )""",
+            """CREATE TABLE IF NOT EXISTS audit_events (
+                id BIGSERIAL PRIMARY KEY,
+                tenant_id TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                entity_type TEXT NOT NULL,
+                entity_id TEXT,
+                detail_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL
+            )""",
+            "CREATE INDEX IF NOT EXISTS idx_audit_tenant ON audit_events(tenant_id, created_at DESC)",
+            """CREATE TABLE IF NOT EXISTS payment_events (
+                event_key TEXT PRIMARY KEY,
+                tenant_id TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                event_name TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                amount_minor BIGINT NOT NULL DEFAULT 0,
+                currency TEXT NOT NULL,
+                customer_hint TEXT,
+                test_mode INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            )""",
+            "CREATE INDEX IF NOT EXISTS idx_payment_events_tenant ON payment_events(tenant_id, created_at DESC)",
+            """CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                email TEXT NOT NULL UNIQUE,
+                display_name TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active'
+                    CHECK (status IN ('active','disabled','pending_verification')),
+                email_verified_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )""",
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_ci ON users(LOWER(email))",
+            """CREATE TABLE IF NOT EXISTS workspaces (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                plan TEXT NOT NULL DEFAULT 'free',
+                created_by TEXT NOT NULL REFERENCES users(id),
+                created_at TEXT NOT NULL
+            )""",
+            """CREATE TABLE IF NOT EXISTS workspace_members (
+                workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                role TEXT NOT NULL CHECK (role IN ('reader','editor','admin')),
+                clearances_json TEXT NOT NULL DEFAULT '[\"public\",\"internal\",\"confidential\"]',
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(workspace_id, user_id)
+            )""",
+            "CREATE INDEX IF NOT EXISTS idx_workspace_members_user ON workspace_members(user_id, workspace_id)",
+            """CREATE TABLE IF NOT EXISTS auth_sessions (
+                token_hash TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+                csrf_token TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL
+            )""",
+            "CREATE INDEX IF NOT EXISTS idx_auth_sessions_expiry ON auth_sessions(expires_at)",
+        ),
+    ),
+)
+
 
 class Database:
+    dialect = "sqlite"
+
     def __init__(self, path: Path):
         self.path = path
 
@@ -176,6 +330,10 @@ class Database:
         with self.connect() as connection:
             connection.executescript(SCHEMA)
             self._migrate(connection)
+
+    @staticmethod
+    def is_unique_violation(exc: Exception) -> bool:
+        return isinstance(exc, sqlite3.IntegrityError)
 
     @staticmethod
     def _migrate(connection: sqlite3.Connection) -> None:
@@ -216,3 +374,87 @@ class Database:
             raise
         finally:
             connection.close()
+
+
+class PostgresConnection:
+    def __init__(self, connection: Any):
+        self.connection = connection
+
+    @staticmethod
+    def _translate(query: str) -> str:
+        return query.replace("%", "%%").replace("?", "%s")
+
+    def execute(
+        self, query: str, parameters: Sequence[Any] | None = None
+    ) -> Any:
+        if parameters is None:
+            return self.connection.execute(query)
+        return self.connection.execute(self._translate(query), tuple(parameters))
+
+
+class PostgresDatabase:
+    dialect = "postgres"
+
+    def __init__(self, url: str):
+        self.url = url
+
+    def _driver(self):
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+        except ImportError as exc:
+            raise RuntimeError("Install the PostgreSQL dependencies from requirements.txt") from exc
+        return psycopg, dict_row
+
+    def initialize(self) -> None:
+        with self.connect() as connection:
+            connection.execute("SELECT pg_advisory_xact_lock(8242026)")
+            connection.execute(
+                """CREATE TABLE IF NOT EXISTS schema_migrations (
+                       version INTEGER PRIMARY KEY,
+                       applied_at TEXT NOT NULL
+                   )"""
+            )
+            applied = {
+                row["version"]
+                for row in connection.execute(
+                    "SELECT version FROM schema_migrations ORDER BY version"
+                ).fetchall()
+            }
+            for version, statements in POSTGRES_MIGRATIONS:
+                if version in applied:
+                    continue
+                for statement in statements:
+                    connection.execute(statement)
+                connection.execute(
+                    "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+                    (version, datetime.now(UTC).isoformat()),
+                )
+
+    @staticmethod
+    def is_unique_violation(exc: Exception) -> bool:
+        return getattr(exc, "sqlstate", None) == "23505"
+
+    @contextmanager
+    def connect(self) -> Iterator[PostgresConnection]:
+        psycopg, dict_row = self._driver()
+        connection = psycopg.connect(self.url, row_factory=dict_row, connect_timeout=10)
+        try:
+            yield PostgresConnection(connection)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+
+DatabaseLike = Database | PostgresDatabase
+
+
+def build_database(settings: Settings) -> DatabaseLike:
+    settings.validate_database()
+    if settings.database_backend == "postgres":
+        assert settings.database_url
+        return PostgresDatabase(settings.database_url.get_secret_value())
+    return Database(settings.db_path)
