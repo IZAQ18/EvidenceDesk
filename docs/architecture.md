@@ -6,14 +6,15 @@ EvidenceDesk optimizes for traceable answers, access decisions before retrieval,
 
 ## Components
 
-1. **FastAPI edge:** validates requests, authenticates API keys or OIDC bearer tokens, applies rate limits and security headers, and exposes document, answer, conversation, feedback, report, and insight endpoints.
-2. **Policy layer:** maps identity to subject, tenant, role, and classification clearances. Those constraints are SQL predicates used before evidence reaches the answer workflow.
-3. **Ingestion:** enforces type, byte, page, OCR-page, and resolution limits; validates PDF signatures; extracts embedded text; OCRs weak PDF pages when available; records extraction diagnostics; and creates page-aware overlapping chunks.
-4. **Original store:** writes each original to a generated tenant/document path with containment checks and an atomic final rename. The storage interface is deliberately small so S3 can replace local disk.
-5. **Evidence store:** SQLite records documents, pages, chunks, conversations, messages, feedback, and text-free audit events. FTS5 provides lexical candidates.
-6. **Retrieval:** expands a small, controlled vocabulary of common organizational concepts, combines FTS rank, exact query overlap, metadata signals, and a second relevance pass, and deduplicates repeated sentences.
-7. **Bounded answer workflow:** extracts supported statements, creates structured page citations, verifies every marker, labels evidence quality, and refuses when support is insufficient.
-8. **Browser workspace:** combines conversation history, explicit document scope, evidence inspection, original preview, library lifecycle tools, feedback, reports, and admin-only operational signals.
+1. **FastAPI edge:** validates requests, authenticates account sessions, API keys, or OIDC bearer tokens, applies rate limits and security headers, and exposes document, answer, conversation, feedback, report, and insight endpoints.
+2. **Account boundary:** optional self-registration creates an isolated workspace and administrator membership. Passwords use salted scrypt hashes; random sessions are stored only as SHA-256 token hashes, sent through HttpOnly cookies, expire server-side, and require a per-session CSRF token for mutations.
+3. **Policy layer:** maps identity to subject, tenant, role, and classification clearances. Those constraints are SQL predicates used before evidence reaches the answer workflow.
+4. **Ingestion:** enforces type, byte, page, OCR-page, and resolution limits; validates PDF signatures; extracts embedded text; OCRs weak PDF pages when available; records extraction diagnostics; and creates page-aware overlapping chunks.
+5. **Original store:** writes each original to a generated tenant/document path with containment checks and an atomic final rename. The storage interface is deliberately small so S3 can replace local disk.
+6. **Evidence store:** SQLite records documents, pages, chunks, conversations, messages, feedback, accounts, workspaces, sessions, and text-free audit events. FTS5 provides lexical candidates.
+7. **Retrieval:** expands a small, controlled vocabulary of common organizational concepts, combines FTS rank, exact query overlap, metadata signals, and a second relevance pass, and deduplicates repeated sentences.
+8. **Bounded answer workflow:** extracts supported statements, creates structured page citations, verifies every marker, labels evidence quality, and refuses when support is insufficient.
+9. **Browser workspace:** combines account-aware onboarding, conversation history, explicit document scope, evidence inspection, original preview, library lifecycle tools, feedback, reports, and admin-only operational signals.
 
 ## Why these decisions
 
@@ -44,4 +45,7 @@ Archive removes a document from normal retrieval without destroying it. Permanen
 - Extraction and OCR are synchronous. A pilot should quarantine uploads and use isolated asynchronous workers with malware scanning.
 - Local originals, SQLite, and in-process throttling are single-instance choices.
 - OIDC has unit-tested token and claim mapping, but must be integration-tested with the selected identity provider.
+- The account boundary is intentionally backed by SQLite for local acceptance testing. Public
+  registration must wait for managed PostgreSQL, verified email, password recovery, invitations,
+  deletion/export controls, and abuse monitoring.
 - The extractive answerer intentionally favors evidence over conversational polish. Any future model must preserve structured citations, access predicates, refusal, and verification.

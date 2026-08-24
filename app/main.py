@@ -13,7 +13,7 @@ from datetime import date
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
@@ -23,6 +23,7 @@ from fastapi.responses import (
 )
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from app.accounts import ACCOUNT_COOKIE, AccountExistsError, AccountStore, account_page
 from app.config import Classification, Settings, get_settings
 from app.db import Database
 from app.ingestion import (
@@ -33,6 +34,9 @@ from app.ingestion import (
     ocr_capability,
 )
 from app.models import (
+    AccountLoginRequest,
+    AccountOut,
+    AccountRegistrationRequest,
     AnswerRequest,
     AnswerResponse,
     BulkDocumentRequest,
@@ -53,7 +57,13 @@ from app.pilot import (
 )
 from app.public_site import public_page
 from app.repository import DuplicateDocumentError, Repository
-from app.security import authenticate_key, enforce_rate_limit, require_admin, require_writer
+from app.security import (
+    authenticate_key,
+    enforce_rate_limit,
+    require_admin,
+    require_writer,
+    resolve_account_session,
+)
 from app.storage import DocumentStorage
 from app.ui import UI_HTML
 from app.workflow import AnswerWorkflow
@@ -125,6 +135,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     repository = Repository(database)
     storage = DocumentStorage(resolved_settings.document_store_path)
     workflow = AnswerWorkflow(repository)
+    account_store = AccountStore(database, resolved_settings.account_session_hours)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -144,7 +155,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     show_docs = resolved_settings.env != "production" or resolved_settings.expose_api_docs
     app = FastAPI(
         title="EvidenceDesk",
-        version="0.8.0",
+        version="0.9.0",
         description="A secure evidence workspace with citations, OCR, conversations, and feedback.",
         lifespan=lifespan,
         docs_url="/docs" if show_docs else None,
@@ -157,6 +168,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = resolved_settings
     app.state.repository = repository
+    app.state.account_store = account_store
 
     def current_settings() -> Settings:
         return resolved_settings
@@ -173,6 +185,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "/pilot-background.png",
             "/developer-signature.png",
             "/access",
+            "/signin",
+            "/v1/auth/register",
+            "/v1/auth/login",
             "/about",
             "/v1/payments/webhook",
         }
@@ -221,7 +236,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 connection.execute("SELECT 1").fetchone()
         except sqlite3.Error as exc:
             raise HTTPException(status_code=503, detail="Database unavailable") from exc
-        return {"status": "ok", "service": "evidencedesk", "version": "0.8.0"}
+        return {"status": "ok", "service": "evidencedesk", "version": "0.9.0"}
 
     @app.get("/robots.txt", response_class=PlainTextResponse, include_in_schema=False)
     def robots() -> PlainTextResponse:
@@ -254,6 +269,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             public_page(
                 checkout_url=resolved_settings.checkout_url,
                 support_url=resolved_settings.support_url,
+                access_url="/signin" if resolved_settings.accounts_enabled else "/access",
             )
         )
 
@@ -277,6 +293,93 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             PILOT_COOKIE,
             pilot_cookie_value(expected),
             max_age=resolved_settings.pilot_session_hours * 3600,
+            httponly=True,
+            secure=resolved_settings.env == "production",
+            samesite="lax",
+            path="/",
+        )
+        return response
+
+    def set_account_cookie(response: Response, token: str) -> None:
+        response.set_cookie(
+            ACCOUNT_COOKIE,
+            token,
+            max_age=resolved_settings.account_session_hours * 3600,
+            httponly=True,
+            secure=resolved_settings.env == "production",
+            samesite="lax",
+            path="/",
+        )
+
+    @app.get(
+        "/signin", response_class=HTMLResponse, response_model=None, include_in_schema=False
+    )
+    def signin(request: Request) -> HTMLResponse | RedirectResponse:
+        if not resolved_settings.accounts_enabled:
+            return RedirectResponse("/access" if resolved_settings.pilot_access_code else "/")
+        if resolve_account_session(request, resolved_settings):
+            return RedirectResponse("/", status_code=307)
+        return HTMLResponse(account_page(resolved_settings.account_registration_enabled))
+
+    @app.post(
+        "/v1/auth/register",
+        response_model=AccountOut,
+        status_code=201,
+        dependencies=[Depends(enforce_rate_limit)],
+    )
+    def register_account(payload: AccountRegistrationRequest, response: Response) -> AccountOut:
+        if not resolved_settings.accounts_enabled:
+            raise HTTPException(status_code=404, detail="Account access is not configured")
+        if not resolved_settings.account_registration_enabled:
+            raise HTTPException(status_code=403, detail="Account registration is invite-only")
+        try:
+            session = account_store.register(
+                payload.email,
+                payload.display_name,
+                payload.password.get_secret_value(),
+            )
+        except AccountExistsError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        set_account_cookie(response, session.token)
+        repository.audit(
+            session.principal,
+            "account_registered",
+            "user",
+            session.user_id,
+            {"workspace_created": True},
+        )
+        return session.public()
+
+    @app.post(
+        "/v1/auth/login",
+        response_model=AccountOut,
+        dependencies=[Depends(enforce_rate_limit)],
+    )
+    def login_account(payload: AccountLoginRequest, response: Response) -> AccountOut:
+        if not resolved_settings.accounts_enabled:
+            raise HTTPException(status_code=404, detail="Account access is not configured")
+        session = account_store.login(payload.email, payload.password.get_secret_value())
+        if not session:
+            raise HTTPException(status_code=401, detail="Email or password is incorrect")
+        set_account_cookie(response, session.token)
+        repository.audit(session.principal, "account_login", "user", session.user_id)
+        return session.public()
+
+    @app.get("/v1/auth/me", response_model=AccountOut)
+    def account_me(request: Request) -> AccountOut:
+        session = resolve_account_session(request, resolved_settings)
+        if not session:
+            raise HTTPException(status_code=401, detail="Sign in required")
+        return session.public()
+
+    @app.post("/v1/auth/logout", status_code=204)
+    def logout_account(
+        request: Request, _: Principal = Depends(authenticate_key)
+    ) -> Response:
+        account_store.logout(request.cookies.get(ACCOUNT_COOKIE))
+        response = Response(status_code=204)
+        response.delete_cookie(
+            ACCOUNT_COOKIE,
             httponly=True,
             secure=resolved_settings.env == "production",
             samesite="lax",
@@ -656,12 +759,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def admin_metrics(principal: Principal = Depends(require_admin)) -> dict:
         return repository.admin_metrics(principal)
 
-    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
-    def index(request: Request) -> HTMLResponse:
+    @app.get(
+        "/", response_class=HTMLResponse, response_model=None, include_in_schema=False
+    )
+    def index(request: Request) -> HTMLResponse | RedirectResponse:
+        if resolved_settings.accounts_enabled and not resolve_account_session(
+            request, resolved_settings
+        ):
+            return RedirectResponse("/signin", status_code=307)
         base_url = (resolved_settings.public_base_url or str(request.base_url)).rstrip("/")
         html = UI_HTML.replace("__SOCIAL_CARD_URL__", f"{base_url}/social-card.png")
         html = html.replace(
             "__PILOT_MODE__", "true" if resolved_settings.pilot_access_code else "false"
+        )
+        html = html.replace(
+            "__ACCOUNT_MODE__", "true" if resolved_settings.accounts_enabled else "false"
         )
         html = html.replace(
             "__SUPPORT_URL__", json.dumps(resolved_settings.support_url or "")

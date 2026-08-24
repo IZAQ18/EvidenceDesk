@@ -6,7 +6,7 @@ EvidenceDesk is a secure, citation-first knowledge assistant for organizational 
 
 This is an intentionally honest portfolio MVP. It runs locally and demonstrates production-minded design, but it is **not** represented as GovCloud-ready, compliance-certified, or proven at large scale.
 
-## What v0.8 includes
+## What v0.9 includes
 
 - Page-aware PDF extraction with bounded OCR fallback for weak pages.
 - Original-file and extracted-page preview with highlighted cited passages.
@@ -16,6 +16,8 @@ This is an intentionally honest portfolio MVP. It runs locally and demonstrates 
 - Persistent conversations, follow-up questions, per-answer feedback, and Markdown report export.
 - Tenant and classification filtering before retrieval; role checks for administration; ownership checks for conversation data.
 - API-key authentication for local use plus an optional standards-based OIDC/JWT validation adapter.
+- An opt-in account foundation with scrypt password hashing, database-backed revocable sessions,
+  HttpOnly cookies, CSRF protection, and a separate private workspace for every registered user.
 - Rate limits, upload limits, security headers, safe file storage, prompt-injection flags, and text-free audit events.
 - A dark-first editorial interface with layered evidence surfaces, gold/emerald trust states, a polished light theme, responsive mobile layout, keyboard focus states, and an IZAQ / 4UP design-engineering signature.
 - Prompt starters, auto-growing questions, toast feedback, `/` question focus, and `Ctrl/Cmd + K` library search.
@@ -81,6 +83,22 @@ EVIDENCEDESK_API_KEYS={"replace-with-a-random-secret":{"subject":"admin","tenant
 ```
 
 `api_key`, `oidc`, and `hybrid` authentication modes are supported. OIDC mode validates RS256 JWT signatures against a configured JWKS endpoint, issuer, audience, expiry, subject, tenant, role, and clearance claims. It is an adapter that must be connected to and tested with your real identity provider before deployment.
+
+For private account testing, enable the account boundary instead of exposing API keys in the
+browser:
+
+```dotenv
+EVIDENCEDESK_ACCOUNTS_ENABLED=true
+EVIDENCEDESK_ACCOUNT_REGISTRATION_ENABLED=true
+EVIDENCEDESK_ACCOUNT_SESSION_HOURS=168
+```
+
+Each registration creates a user, a private workspace, an administrator membership, and a
+revocable server-side session. Existing tenant filters then isolate documents, retrieval,
+conversations, reports, feedback, and metrics by workspace. This is the first production
+transformation milestone, not a claim that public account service is finished: email
+verification, password reset, managed PostgreSQL, invitations, and account deletion remain
+launch gates. See [launch readiness](docs/launch-readiness.md).
 
 ### Docker
 

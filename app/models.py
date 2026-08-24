@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr, field_validator
 
 from app.config import Classification
 
@@ -13,6 +13,58 @@ class Principal(BaseModel):
     tenant_id: str
     role: str
     clearances: list[Classification]
+
+
+class AccountRegistrationRequest(BaseModel):
+    display_name: str = Field(min_length=2, max_length=80)
+    email: str = Field(min_length=5, max_length=254)
+    password: SecretStr = Field(min_length=12, max_length=128)
+
+    @field_validator("display_name")
+    @classmethod
+    def clean_display_name(cls, value: str) -> str:
+        cleaned = " ".join(value.split())
+        if len(cleaned) < 2 or any(ord(character) < 32 for character in cleaned):
+            raise ValueError("Enter a valid display name")
+        return cleaned
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        local, separator, domain = normalized.rpartition("@")
+        if (
+            not separator
+            or not local
+            or "." not in domain
+            or domain.startswith(".")
+            or domain.endswith(".")
+            or any(character.isspace() for character in normalized)
+        ):
+            raise ValueError("Enter a valid email address")
+        return normalized
+
+
+class AccountLoginRequest(BaseModel):
+    email: str = Field(min_length=5, max_length=254)
+    password: SecretStr = Field(min_length=1, max_length=128)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        return value.strip().lower()
+
+
+class AccountOut(BaseModel):
+    id: str
+    email: str
+    display_name: str
+    workspace_id: str
+    workspace_name: str
+    role: Literal["reader", "editor", "admin"]
+    clearances: list[Classification]
+    plan: str
+    csrf_token: str
 
 
 class DocumentOut(BaseModel):

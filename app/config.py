@@ -24,6 +24,9 @@ class Settings(BaseSettings):
 
     env: Literal["development", "test", "production"] = "development"
     auth_mode: Literal["api_key", "oidc", "hybrid"] = "api_key"
+    accounts_enabled: bool = False
+    account_registration_enabled: bool = False
+    account_session_hours: int = Field(default=24 * 7, ge=1, le=24 * 30)
     oidc_issuer: str | None = None
     oidc_audience: str | None = None
     oidc_jwks_url: str | None = None
@@ -74,9 +77,16 @@ class Settings(BaseSettings):
     def resolved_api_keys(self) -> dict[str, PrincipalConfig]:
         if isinstance(self.api_keys, dict) and self.api_keys:
             return self.api_keys
-        if self.env == "production" and self.auth_mode != "oidc" and not self.pilot_access_code:
+        if (
+            self.env == "production"
+            and self.auth_mode != "oidc"
+            and not self.pilot_access_code
+            and not self.accounts_enabled
+        ):
             raise RuntimeError("EVIDENCEDESK_API_KEYS must be configured in production")
         if self.pilot_access_code:
+            return {}
+        if self.accounts_enabled:
             return {}
         if self.auth_mode == "oidc":
             return {}
@@ -96,6 +106,12 @@ class Settings(BaseSettings):
         }
 
     def validate_auth(self) -> None:
+        if self.accounts_enabled and self.pilot_access_code:
+            raise RuntimeError(
+                "Account mode and the shared pilot access code are mutually exclusive"
+            )
+        if self.account_registration_enabled and not self.accounts_enabled:
+            raise RuntimeError("Account registration requires EVIDENCEDESK_ACCOUNTS_ENABLED=true")
         if self.auth_mode in {"oidc", "hybrid"}:
             missing = [
                 name

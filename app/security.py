@@ -11,11 +11,13 @@ from typing import Any
 
 from fastapi import Depends, Header, HTTPException, Request, status
 
+from app.accounts import ACCOUNT_COOKIE, AccountSession
 from app.config import Settings, get_settings
 from app.models import Principal
 from app.pilot import has_pilot_access, pilot_principal
 
 logger = logging.getLogger("evidencedesk.security")
+_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 
 def _fingerprint(value: str) -> str:
@@ -71,6 +73,15 @@ def _decode_oidc_token(token: str, settings: Settings) -> Principal:
         ) from exc
 
 
+def resolve_account_session(request: Request, settings: Settings) -> AccountSession | None:
+    if not settings.accounts_enabled:
+        return None
+    store = getattr(request.app.state, "account_store", None)
+    if store is None:
+        return None
+    return store.resolve(request.cookies.get(ACCOUNT_COOKIE))
+
+
 def authenticate_key(
     x_api_key: str | None = Header(default=None),
     authorization: str | None = Header(default=None),
@@ -79,6 +90,17 @@ def authenticate_key(
 ) -> Principal:
     if request and settings.pilot_access_code and has_pilot_access(request, settings):
         return pilot_principal(settings)
+    if request:
+        account_session = resolve_account_session(request, settings)
+        if account_session:
+            if request.method.upper() not in _SAFE_METHODS:
+                csrf_token = request.headers.get("X-CSRF-Token", "")
+                if not hmac.compare_digest(csrf_token, account_session.csrf_token):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Invalid session security token",
+                    )
+            return account_session.principal
     if authorization and authorization.lower().startswith("bearer "):
         if settings.auth_mode not in {"oidc", "hybrid"}:
             raise HTTPException(
@@ -93,6 +115,8 @@ def authenticate_key(
     if settings.auth_mode == "oidc":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Bearer token required")
     if not x_api_key:
+        if settings.accounts_enabled:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Sign in required")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
 
     matched = None
@@ -144,6 +168,7 @@ async def enforce_rate_limit(request: Request, settings: Settings = Depends(get_
     identity = (
         request.headers.get("x-api-key")
         or request.headers.get("authorization")
+        or request.cookies.get(ACCOUNT_COOKIE)
         or (request.client.host if request.client else "unknown")
     )
     identity = _fingerprint(identity)

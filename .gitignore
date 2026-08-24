@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 .pytest-tmp/
 .pytest-evidencedesk-*/
+.pytest-*/
 .ruff_cache/
 .coverage
 *.py[cod]
