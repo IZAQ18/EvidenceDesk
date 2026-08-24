@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
+from urllib.parse import quote
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
@@ -20,6 +21,7 @@ from fastapi.responses import (
     JSONResponse,
     PlainTextResponse,
     RedirectResponse,
+    StreamingResponse,
 )
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -64,7 +66,7 @@ from app.security import (
     require_writer,
     resolve_account_session,
 )
-from app.storage import DocumentStorage
+from app.storage import OriginalStorage, build_document_storage
 from app.ui import UI_HTML
 from app.workflow import AnswerWorkflow
 
@@ -90,7 +92,7 @@ def _date_value(value: str | None, label: str) -> str | None:
 
 
 def _seed_demo_documents(
-    settings: Settings, repository: Repository, storage: DocumentStorage
+    settings: Settings, repository: Repository, storage: OriginalStorage
 ) -> None:
     """Seed synthetic examples when an ephemeral pilot starts with an empty database."""
     principal = pilot_principal(settings)
@@ -108,7 +110,13 @@ def _seed_demo_documents(
             extraction_method="plain-text",
         )
         document_id = str(uuid4())
-        storage_path = storage.save(principal.tenant_id, document_id, ".md", content)
+        storage_path = storage.save(
+            principal.tenant_id,
+            document_id,
+            ".md",
+            content,
+            extracted.content_type,
+        )
         repository.add_document(
             extracted,
             chunk_pages(extracted.pages),
@@ -133,13 +141,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     resolved_settings = settings or get_settings()
     database = Database(resolved_settings.db_path)
     repository = Repository(database)
-    storage = DocumentStorage(resolved_settings.document_store_path)
+    storage = build_document_storage(resolved_settings)
     workflow = AnswerWorkflow(repository)
     account_store = AccountStore(database, resolved_settings.account_session_hours)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         resolved_settings.validate_auth()
+        resolved_settings.validate_storage()
         resolved_settings.resolved_api_keys()
         database.initialize()
         if resolved_settings.seed_demo_content:
@@ -469,7 +478,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         document_id = str(uuid4())
         extension = Path(extracted.filename).suffix
         storage_path = storage.save(
-            principal.tenant_id, document_id, extension, extracted.content
+            principal.tenant_id,
+            document_id,
+            extension,
+            extracted.content,
+            extracted.content_type,
         )
         try:
             repository.add_document(
@@ -536,19 +549,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/v1/documents/{document_id}/content", dependencies=[Depends(enforce_rate_limit)])
     def document_content(
         document_id: str, principal: Principal = Depends(authenticate_key)
-    ) -> FileResponse:
+    ) -> StreamingResponse:
         document = repository.get_document(document_id, principal)
         if not document or not document.get("storage_path"):
             raise HTTPException(status_code=404, detail="Original document not found")
         try:
-            path = storage.path_for(document["storage_path"])
+            content = storage.stream(document["storage_path"])
         except (FileNotFoundError, ValueError) as exc:
             raise HTTPException(status_code=404, detail="Original document not found") from exc
-        return FileResponse(
-            path,
+        return StreamingResponse(
+            content,
             media_type=document["content_type"],
-            filename=document["filename"],
-            content_disposition_type="inline",
+            headers={
+                "Content-Disposition": f"inline; filename*=UTF-8''{quote(document['filename'])}"
+            },
         )
 
     @app.get("/v1/documents/{document_id}/pages/{page_number}")

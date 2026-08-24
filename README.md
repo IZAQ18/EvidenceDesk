@@ -18,6 +18,9 @@ This is an intentionally honest portfolio MVP. It runs locally and demonstrates 
 - API-key authentication for local use plus an optional standards-based OIDC/JWT validation adapter.
 - An opt-in account foundation with scrypt password hashing, database-backed revocable sessions,
   HttpOnly cookies, CSRF protection, and a separate private workspace for every registered user.
+- A replaceable original-storage boundary with backward-compatible local files and an optional
+  private S3 backend using tenant-scoped object keys, authenticated streaming, server-side
+  encryption, KMS support, and expected-bucket-owner protection.
 - Rate limits, upload limits, security headers, safe file storage, prompt-injection flags, and text-free audit events.
 - A dark-first editorial interface with layered evidence surfaces, gold/emerald trust states, a polished light theme, responsive mobile layout, keyboard focus states, and an IZAQ / 4UP design-engineering signature.
 - Prompt starters, auto-growing questions, toast feedback, `/` question focus, and `Ctrl/Cmd + K` library search.
@@ -99,6 +102,27 @@ conversations, reports, feedback, and metrics by workspace. This is the first pr
 transformation milestone, not a claim that public account service is finished: email
 verification, password reset, managed PostgreSQL, invitations, and account deletion remain
 launch gates. See [launch readiness](docs/launch-readiness.md).
+
+### Configure durable originals
+
+Local storage remains the default for development and the protected synthetic demo. A standard
+AWS deployment can store originals in a private S3 bucket without changing the ingestion or
+citation APIs:
+
+```dotenv
+EVIDENCEDESK_DOCUMENT_STORE_BACKEND=s3
+EVIDENCEDESK_S3_BUCKET=evidencedesk-private-dev
+EVIDENCEDESK_S3_PREFIX=evidencedesk/originals
+EVIDENCEDESK_S3_REGION=us-east-1
+EVIDENCEDESK_S3_KMS_KEY_ID=alias/evidencedesk-documents
+EVIDENCEDESK_S3_EXPECTED_BUCKET_OWNER=123456789012
+```
+
+Credentials are deliberately not configuration fields: boto3 reads them from the normal AWS
+credential provider chain, so ECS should use a least-privilege task role. Objects are never made
+public or exposed with a direct browser URL; EvidenceDesk authorizes the request first and then
+streams the original through the application. This adapter has local automated tests but has not
+yet been represented as a deployed AWS production workload.
 
 ### Docker
 

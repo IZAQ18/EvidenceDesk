@@ -35,6 +35,13 @@ class Settings(BaseSettings):
     oidc_clearances_claim: str = "clearances"
     db_path: Path = Path("data/evidencedesk.db")
     document_store_path: Path = Path("data/originals")
+    document_store_backend: Literal["local", "s3"] = "local"
+    s3_bucket: str | None = Field(default=None, min_length=3, max_length=63)
+    s3_prefix: str = Field(default="evidencedesk/originals", min_length=1, max_length=200)
+    s3_region: str | None = Field(default=None, max_length=50)
+    s3_endpoint_url: str | None = None
+    s3_kms_key_id: SecretStr | None = None
+    s3_expected_bucket_owner: str | None = Field(default=None, pattern=r"^\d{12}$")
     max_upload_bytes: int = Field(default=10_000_000, ge=1, le=50_000_000)
     rate_limit_per_minute: int = Field(default=60, ge=1, le=10_000)
     max_chunks_per_document: int = Field(default=2_000, ge=1, le=20_000)
@@ -124,6 +131,15 @@ class Settings(BaseSettings):
             ]
             if missing:
                 raise RuntimeError(f"OIDC configuration is incomplete: {', '.join(missing)}")
+
+    def validate_storage(self) -> None:
+        if self.document_store_backend != "s3":
+            return
+        if not self.s3_bucket:
+            raise RuntimeError("EVIDENCEDESK_S3_BUCKET is required for S3 document storage")
+        if self.env == "production" and self.s3_endpoint_url:
+            if not self.s3_endpoint_url.startswith("https://"):
+                raise RuntimeError("Production S3 endpoints must use HTTPS")
 
     def resolved_allowed_hosts(self) -> list[str]:
         return [host.strip() for host in self.allowed_hosts.split(",") if host.strip()]

@@ -10,7 +10,7 @@ EvidenceDesk optimizes for traceable answers, access decisions before retrieval,
 2. **Account boundary:** optional self-registration creates an isolated workspace and administrator membership. Passwords use salted scrypt hashes; random sessions are stored only as SHA-256 token hashes, sent through HttpOnly cookies, expire server-side, and require a per-session CSRF token for mutations.
 3. **Policy layer:** maps identity to subject, tenant, role, and classification clearances. Those constraints are SQL predicates used before evidence reaches the answer workflow.
 4. **Ingestion:** enforces type, byte, page, OCR-page, and resolution limits; validates PDF signatures; extracts embedded text; OCRs weak PDF pages when available; records extraction diagnostics; and creates page-aware overlapping chunks.
-5. **Original store:** writes each original to a generated tenant/document path with containment checks and an atomic final rename. The storage interface is deliberately small so S3 can replace local disk.
+5. **Original store:** writes each original behind a small storage interface. Local mode uses generated tenant/document paths, containment checks, fsync, and an atomic final rename. Optional S3 mode uses tenant-scoped keys, server-side AES-256 or KMS encryption, expected-owner checks, and authenticated application streaming; it never creates a public object URL.
 6. **Evidence store:** SQLite records documents, pages, chunks, conversations, messages, feedback, accounts, workspaces, sessions, and text-free audit events. FTS5 provides lexical candidates.
 7. **Retrieval:** expands a small, controlled vocabulary of common organizational concepts, combines FTS rank, exact query overlap, metadata signals, and a second relevance pass, and deduplicates repeated sentences.
 8. **Bounded answer workflow:** extracts supported statements, creates structured page citations, verifies every marker, labels evidence quality, and refuses when support is insufficient.
@@ -44,6 +44,9 @@ Archive removes a document from normal retrieval without destroying it. Permanen
 - OCR depends on scan quality, language data, layout, and Tesseract; handwriting and complex tables remain difficult.
 - Extraction and OCR are synchronous. A pilot should quarantine uploads and use isolated asynchronous workers with malware scanning.
 - Local originals, SQLite, and in-process throttling are single-instance choices.
+- The S3 adapter is implemented and unit-tested with a fake client, but real IAM, bucket policy,
+  lifecycle, access logging, malware quarantine, and restore behavior still require integration
+  testing in the selected AWS account.
 - OIDC has unit-tested token and claim mapping, but must be integration-tested with the selected identity provider.
 - The account boundary is intentionally backed by SQLite for local acceptance testing. Public
   registration must wait for managed PostgreSQL, verified email, password recovery, invitations,

@@ -14,7 +14,7 @@ the organization has not supplied enough information.
 | Gate | Measurable definition | Current state |
 | --- | --- | --- |
 | Account safety | Individual sign-in, revocable sessions, CSRF protection, tenant isolation | Foundation implemented; email verification and recovery pending |
-| Durable data | Managed PostgreSQL, private object storage, backups, restore exercise | Pending |
+| Durable data | Managed PostgreSQL, private object storage, backups, restore exercise | Private S3 adapter implemented and locally tested; real AWS integration, PostgreSQL, backups, and restore exercise pending |
 | Ingestion | Async processing, malware scan, progress, resilient OCR and table handling | Synchronous MVP available; production work pending |
 | Answer quality | Organization-specific gold set, >=95% retrieval success, >=98% valid citations | Evaluation harness exists; benchmark expansion pending |
 | Customer AI | Server-managed provider, quotas, cost controls, no customer key required | Pending |
