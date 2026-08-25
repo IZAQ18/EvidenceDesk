@@ -431,8 +431,8 @@ def test_postgres_workspace_invitation_and_membership_switch(tmp_path):
                 "SELECT created_by FROM workspaces WHERE id = ?", (owner["workspace_id"],)
             ).fetchone()
             member_count = connection.execute(
-                "SELECT COUNT(*) FROM workspace_members WHERE workspace_id = ?",
+                "SELECT COUNT(*) member_count FROM workspace_members WHERE workspace_id = ?",
                 (owner["workspace_id"],),
-            ).fetchone()[0]
+            ).fetchone()["member_count"]
         assert workspace["created_by"] == accepted.json()["id"]
         assert member_count == 1
