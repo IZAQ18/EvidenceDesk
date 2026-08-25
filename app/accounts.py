@@ -133,6 +133,10 @@ class AccountDeletionBlocked(ValueError):
     pass
 
 
+class MembershipError(ValueError):
+    pass
+
+
 class AccountStore:
     """Small account boundary that can later be replaced by a managed identity service."""
 
@@ -650,6 +654,203 @@ class AccountStore:
             for row in rows
         ]
 
+    def list_members(self, session: AccountSession) -> list[dict[str, Any]]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """SELECT u.id, u.email, u.display_name, m.role, m.clearances_json,
+                          m.created_at joined_at, w.created_by
+                   FROM workspace_members m
+                   JOIN users u ON u.id = m.user_id
+                   JOIN workspaces w ON w.id = m.workspace_id
+                   WHERE m.workspace_id = ? AND u.status = 'active'
+                   ORDER BY CASE WHEN u.id = w.created_by THEN 0 ELSE 1 END,
+                            m.created_at, LOWER(u.email)""",
+                (session.workspace_id,),
+            ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "email": row["email"],
+                "display_name": row["display_name"],
+                "role": row["role"],
+                "clearances": json.loads(row["clearances_json"]),
+                "joined_at": row["joined_at"],
+                "is_owner": row["id"] == row["created_by"],
+            }
+            for row in rows
+        ]
+
+    @staticmethod
+    def _verify_current_password(connection: Any, user_id: str, password: str) -> None:
+        user = connection.execute(
+            "SELECT password_hash FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+        encoded = user["password_hash"] if user else _DUMMY_PASSWORD_HASH
+        if not user or not verify_password(password, encoded):
+            raise InvitationError("Password is incorrect")
+
+    def update_member(
+        self,
+        session: AccountSession,
+        user_id: str,
+        role: str,
+        clearances: list[str],
+    ) -> dict[str, Any]:
+        with self.database.connect() as connection:
+            workspace = connection.execute(
+                "SELECT created_by FROM workspaces WHERE id = ?", (session.workspace_id,)
+            ).fetchone()
+            member = connection.execute(
+                """SELECT u.id, u.email, u.display_name, m.created_at joined_at
+                   FROM workspace_members m JOIN users u ON u.id = m.user_id
+                   WHERE m.workspace_id = ? AND m.user_id = ?""",
+                (session.workspace_id, user_id),
+            ).fetchone()
+            if not workspace or not member:
+                raise MembershipError("Workspace member not found")
+            if user_id == workspace["created_by"]:
+                raise MembershipError("Transfer ownership before changing the owner's access")
+            if user_id == session.user_id:
+                raise MembershipError("You cannot change your own workspace access")
+            connection.execute(
+                """UPDATE workspace_members SET role = ?, clearances_json = ?
+                   WHERE workspace_id = ? AND user_id = ?""",
+                (
+                    role,
+                    json.dumps(clearances, separators=(",", ":")),
+                    session.workspace_id,
+                    user_id,
+                ),
+            )
+            connection.execute(
+                "DELETE FROM auth_sessions WHERE workspace_id = ? AND user_id = ?",
+                (session.workspace_id, user_id),
+            )
+        return {
+            "id": member["id"],
+            "email": member["email"],
+            "display_name": member["display_name"],
+            "role": role,
+            "clearances": clearances,
+            "joined_at": member["joined_at"],
+            "is_owner": False,
+        }
+
+    def remove_member(
+        self, session: AccountSession, user_id: str, password: str
+    ) -> None:
+        with self.database.connect() as connection:
+            self._verify_current_password(connection, session.user_id, password)
+            workspace = connection.execute(
+                "SELECT created_by FROM workspaces WHERE id = ?", (session.workspace_id,)
+            ).fetchone()
+            member = connection.execute(
+                """SELECT 1 FROM workspace_members
+                   WHERE workspace_id = ? AND user_id = ?""",
+                (session.workspace_id, user_id),
+            ).fetchone()
+            if not workspace or not member:
+                raise MembershipError("Workspace member not found")
+            if user_id == session.user_id:
+                raise MembershipError("Use Leave workspace to remove your own membership")
+            if user_id == workspace["created_by"]:
+                raise MembershipError("The workspace owner cannot be removed")
+            connection.execute(
+                "DELETE FROM auth_sessions WHERE workspace_id = ? AND user_id = ?",
+                (session.workspace_id, user_id),
+            )
+            connection.execute(
+                "DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?",
+                (session.workspace_id, user_id),
+            )
+
+    def transfer_ownership(
+        self, session: AccountSession, new_owner_user_id: str, password: str
+    ) -> None:
+        with self.database.connect() as connection:
+            self._verify_current_password(connection, session.user_id, password)
+            workspace = connection.execute(
+                "SELECT created_by FROM workspaces WHERE id = ?", (session.workspace_id,)
+            ).fetchone()
+            if not workspace or workspace["created_by"] != session.user_id:
+                raise MembershipError("Only the current owner can transfer this workspace")
+            if new_owner_user_id == session.user_id:
+                raise MembershipError("Choose another workspace member as the new owner")
+            target = connection.execute(
+                """SELECT 1 FROM workspace_members
+                   WHERE workspace_id = ? AND user_id = ?""",
+                (session.workspace_id, new_owner_user_id),
+            ).fetchone()
+            if not target:
+                raise MembershipError("The new owner must already be a workspace member")
+            transferred = connection.execute(
+                "UPDATE workspaces SET created_by = ? WHERE id = ? AND created_by = ?",
+                (new_owner_user_id, session.workspace_id, session.user_id),
+            )
+            if transferred.rowcount != 1:
+                raise MembershipError("Workspace ownership changed; refresh and try again")
+            connection.execute(
+                """UPDATE workspace_members
+                   SET role = 'admin', clearances_json = ?
+                   WHERE workspace_id = ? AND user_id = ?""",
+                (
+                    '["public","internal","confidential"]',
+                    session.workspace_id,
+                    new_owner_user_id,
+                ),
+            )
+            connection.execute(
+                "DELETE FROM auth_sessions WHERE workspace_id = ? AND user_id = ?",
+                (session.workspace_id, new_owner_user_id),
+            )
+
+    def leave_workspace(self, session: AccountSession, password: str) -> AccountSession:
+        now = _now()
+        with self.database.connect() as connection:
+            self._verify_current_password(connection, session.user_id, password)
+            workspace = connection.execute(
+                "SELECT created_by FROM workspaces WHERE id = ?", (session.workspace_id,)
+            ).fetchone()
+            if not workspace:
+                raise MembershipError("Workspace not found")
+            if workspace["created_by"] == session.user_id:
+                raise MembershipError("Transfer ownership before leaving this workspace")
+            replacement = connection.execute(
+                """SELECT u.id user_id, u.email, u.display_name,
+                          w.id workspace_id, w.name workspace_name, w.plan,
+                          m.role, m.clearances_json
+                   FROM users u JOIN workspace_members m ON m.user_id = u.id
+                   JOIN workspaces w ON w.id = m.workspace_id
+                   WHERE u.id = ? AND w.id <> ? AND u.status = 'active'
+                   ORDER BY m.created_at LIMIT 1""",
+                (session.user_id, session.workspace_id),
+            ).fetchone()
+            if not replacement:
+                raise MembershipError(
+                    "This is your only workspace; delete the account instead of leaving it"
+                )
+            connection.execute(
+                "DELETE FROM auth_sessions WHERE workspace_id = ? AND user_id = ?",
+                (session.workspace_id, session.user_id),
+            )
+            connection.execute(
+                "DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ?",
+                (session.workspace_id, session.user_id),
+            )
+            token = secrets.token_urlsafe(32)
+            csrf_token = secrets.token_urlsafe(24)
+            expires_at = now + timedelta(hours=self.session_hours)
+            self._insert_session(
+                connection,
+                token,
+                csrf_token,
+                session.user_id,
+                replacement["workspace_id"],
+                now,
+                expires_at,
+            )
+        return self._from_row(replacement, token, csrf_token, expires_at)
+
     def switch_workspace(self, session: AccountSession, workspace_id: str) -> AccountSession | None:
         now = _now()
         with self.database.connect() as connection:
@@ -678,12 +879,7 @@ class AccountStore:
 
     def delete_account(self, session: AccountSession, password: str) -> tuple[list[str], list[str]]:
         with self.database.connect() as connection:
-            user = connection.execute(
-                "SELECT password_hash FROM users WHERE id = ?", (session.user_id,)
-            ).fetchone()
-            encoded = user["password_hash"] if user else _DUMMY_PASSWORD_HASH
-            if not user or not verify_password(password, encoded):
-                raise InvitationError("Password is incorrect")
+            self._verify_current_password(connection, session.user_id, password)
             owned = connection.execute(
                 """SELECT w.id, w.name,
                           (SELECT COUNT(*) FROM workspace_members m

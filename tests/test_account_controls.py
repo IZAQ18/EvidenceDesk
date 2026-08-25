@@ -191,6 +191,178 @@ def test_invitation_is_one_time_scoped_and_supports_workspace_switching(tmp_path
         assert blocked.status_code == 409
         assert "other members" in blocked.json()["detail"]
 
+        members = client.get("/v1/account/members")
+        assert members.status_code == 200
+        assert [(item["email"], item["is_owner"]) for item in members.json()] == [
+            ("owner@example.com", True),
+            ("guest@example.com", False),
+        ]
+        owner_demotion = client.patch(
+            f"/v1/account/members/{owner['id']}",
+            headers={"X-CSRF-Token": owner["csrf_token"]},
+            json={"role": "reader", "clearances": ["public"]},
+        )
+        assert owner_demotion.status_code == 409
+        assert "Transfer ownership" in owner_demotion.json()["detail"]
+        missing_csrf_update = client.patch(
+            f"/v1/account/members/{guest['id']}",
+            json={"role": "editor", "clearances": ["public", "internal"]},
+        )
+        assert missing_csrf_update.status_code == 403
+        updated = client.patch(
+            f"/v1/account/members/{guest['id']}",
+            headers={"X-CSRF-Token": owner["csrf_token"]},
+            json={
+                "role": "editor",
+                "clearances": ["public", "internal", "confidential"],
+            },
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["role"] == "editor"
+        assert updated.json()["clearances"][-1] == "confidential"
+        with app.state.repository.database.connect() as connection:
+            guest_workspace_sessions = connection.execute(
+                """SELECT COUNT(*) FROM auth_sessions
+                   WHERE workspace_id = ? AND user_id = ?""",
+                (owner_workspace_id, guest["id"]),
+            ).fetchone()[0]
+        assert guest_workspace_sessions == 0
+
+        wrong_password = client.post(
+            "/v1/account/ownership/transfer",
+            headers={"X-CSRF-Token": owner["csrf_token"]},
+            json={
+                "new_owner_user_id": guest["id"],
+                "password": "wrong-password",
+                "confirmation": "TRANSFER",
+            },
+        )
+        assert wrong_password.status_code == 400
+        transferred = client.post(
+            "/v1/account/ownership/transfer",
+            headers={"X-CSRF-Token": owner["csrf_token"]},
+            json={
+                "new_owner_user_id": guest["id"],
+                "password": PASSWORD,
+                "confirmation": "TRANSFER",
+            },
+        )
+        assert transferred.status_code == 204, transferred.text
+
+        protected_owner = client.post(
+            f"/v1/account/members/{guest['id']}/remove",
+            headers={"X-CSRF-Token": owner["csrf_token"]},
+            json={"password": PASSWORD, "confirmation": "REMOVE"},
+        )
+        assert protected_owner.status_code == 409
+        assert "owner cannot be removed" in protected_owner.json()["detail"]
+
+        deleted_after_handoff = client.post(
+            "/v1/account/delete",
+            headers={"X-CSRF-Token": owner["csrf_token"]},
+            json={"password": PASSWORD, "confirmation": "DELETE"},
+        )
+        assert deleted_after_handoff.status_code == 204, deleted_after_handoff.text
+        with app.state.repository.database.connect() as connection:
+            workspace = connection.execute(
+                "SELECT created_by FROM workspaces WHERE id = ?", (owner_workspace_id,)
+            ).fetchone()
+            remaining = connection.execute(
+                "SELECT role, clearances_json FROM workspace_members WHERE workspace_id = ?",
+                (owner_workspace_id,),
+            ).fetchall()
+            deleted_user = connection.execute(
+                "SELECT 1 FROM users WHERE id = ?", (owner["id"],)
+            ).fetchone()
+        assert workspace["created_by"] == guest["id"]
+        assert len(remaining) == 1
+        assert remaining[0]["role"] == "admin"
+        assert json.loads(remaining[0]["clearances_json"])[-1] == "confidential"
+        assert deleted_user is None
+
+
+def test_member_can_leave_and_admin_can_remove_without_deleting_account(tmp_path):
+    sender = CapturingInvitationSender()
+    app = create_app(_settings(tmp_path), account_email_sender=sender)
+    with TestClient(app, base_url="https://testserver") as client:
+        owner = _register(client, "owner@example.com", "Owner Account")
+        owner_workspace_id = owner["workspace_id"]
+        client.cookies.clear()
+        guest = _register(client, "guest@example.com", "Guest Account")
+        guest_workspace_id = guest["workspace_id"]
+
+        client.cookies.clear()
+        owner = _login(client, "owner@example.com")
+        invited = client.post(
+            "/v1/account/invitations",
+            headers={"X-CSRF-Token": owner["csrf_token"]},
+            json={"email": guest["email"], "role": "reader"},
+        )
+        assert invited.status_code == 201
+        token = _invitation_token(sender)
+
+        client.cookies.clear()
+        guest = _login(client, "guest@example.com")
+        accepted = client.post(
+            "/v1/auth/invitations/accept",
+            headers={"X-CSRF-Token": guest["csrf_token"]},
+            json={"token": token},
+        )
+        assert accepted.status_code == 200
+        left = client.post(
+            "/v1/account/workspaces/current/leave",
+            headers={"X-CSRF-Token": accepted.json()["csrf_token"]},
+            json={"password": PASSWORD, "confirmation": "LEAVE"},
+        )
+        assert left.status_code == 200, left.text
+        assert left.json()["workspace_id"] == guest_workspace_id
+
+        client.cookies.clear()
+        owner = _login(client, "owner@example.com")
+        reinvited = client.post(
+            "/v1/account/invitations",
+            headers={"X-CSRF-Token": owner["csrf_token"]},
+            json={"email": guest["email"], "role": "reader"},
+        )
+        assert reinvited.status_code == 201
+        second_token = _invitation_token(sender)
+        client.cookies.clear()
+        guest = _login(client, "guest@example.com")
+        assert (
+            client.post(
+                "/v1/auth/invitations/accept",
+                headers={"X-CSRF-Token": guest["csrf_token"]},
+                json={"token": second_token},
+            ).status_code
+            == 200
+        )
+
+        client.cookies.clear()
+        owner = _login(client, "owner@example.com")
+        wrong_password = client.post(
+            f"/v1/account/members/{guest['id']}/remove",
+            headers={"X-CSRF-Token": owner["csrf_token"]},
+            json={"password": "wrong-password", "confirmation": "REMOVE"},
+        )
+        assert wrong_password.status_code == 400
+        removed = client.post(
+            f"/v1/account/members/{guest['id']}/remove",
+            headers={"X-CSRF-Token": owner["csrf_token"]},
+            json={"password": PASSWORD, "confirmation": "REMOVE"},
+        )
+        assert removed.status_code == 204, removed.text
+        with app.state.repository.database.connect() as connection:
+            membership = connection.execute(
+                """SELECT 1 FROM workspace_members
+                   WHERE workspace_id = ? AND user_id = ?""",
+                (owner_workspace_id, guest["id"]),
+            ).fetchone()
+            account = connection.execute(
+                "SELECT 1 FROM users WHERE id = ?", (guest["id"],)
+            ).fetchone()
+        assert membership is None
+        assert account is not None
+
 
 def test_anonymous_invitation_creates_account_without_exposing_token(tmp_path):
     sender = CapturingInvitationSender()
@@ -221,6 +393,13 @@ def test_anonymous_invitation_creates_account_without_exposing_token(tmp_path):
         assert accepted.json()["email"] == "new@example.com"
         assert accepted.json()["role"] == "editor"
         assert ACCOUNT_COOKIE in client.cookies
+        only_workspace = client.post(
+            "/v1/account/workspaces/current/leave",
+            headers={"X-CSRF-Token": accepted.json()["csrf_token"]},
+            json={"password": PASSWORD, "confirmation": "LEAVE"},
+        )
+        assert only_workspace.status_code == 409
+        assert "only workspace" in only_workspace.json()["detail"]
 
 
 def test_workspace_export_excludes_secrets_and_deletion_cleans_storage(tmp_path):
@@ -284,6 +463,19 @@ def test_workspace_export_excludes_secrets_and_deletion_cleans_storage(tmp_path)
             assert connection.execute("SELECT COUNT(*) FROM documents").fetchone()[0] == 0
 
 
+def test_account_panel_exposes_member_ownership_and_leave_controls(tmp_path):
+    app = create_app(_settings(tmp_path), account_email_sender=CapturingInvitationSender())
+    with TestClient(app, base_url="https://testserver") as client:
+        _register(client, "panel@example.com", "Panel Owner")
+        page = client.get("/")
+        assert page.status_code == 200
+        assert 'id="memberSection"' in page.text
+        assert 'id="memberActionPassword"' in page.text
+        assert 'id="leaveWorkspace"' in page.text
+        assert "Make owner" in page.text
+        assert "/v1/account/ownership/transfer" in page.text
+
+
 def test_account_controls_fail_closed_when_not_enabled(tmp_path):
     settings = _settings(tmp_path).model_copy(
         update={
@@ -297,6 +489,19 @@ def test_account_controls_fail_closed_when_not_enabled(tmp_path):
         owner = _register(client, "closed@example.com", "Closed Controls")
         headers = {"X-CSRF-Token": owner["csrf_token"]}
         assert client.get("/v1/account/invitations").status_code == 404
+        assert client.get("/v1/account/members").status_code == 404
+        assert (
+            client.post(
+                "/v1/account/ownership/transfer",
+                headers=headers,
+                json={
+                    "new_owner_user_id": owner["id"],
+                    "password": PASSWORD,
+                    "confirmation": "TRANSFER",
+                },
+            ).status_code
+            == 404
+        )
         assert client.post("/v1/account/export", headers=headers).status_code == 404
         assert (
             client.post(

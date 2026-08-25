@@ -34,6 +34,7 @@ from app.accounts import (
     AccountSession,
     AccountStore,
     InvitationError,
+    MembershipError,
     WorkspaceInvitationAction,
     account_page,
     account_recovery_page,
@@ -74,7 +75,12 @@ from app.models import (
     WorkspaceInvitationAcceptRequest,
     WorkspaceInvitationOut,
     WorkspaceInvitationRequest,
+    WorkspaceLeaveRequest,
+    WorkspaceMemberOut,
+    WorkspaceMemberRemoveRequest,
+    WorkspaceMemberUpdateRequest,
     WorkspaceOut,
+    WorkspaceOwnershipTransferRequest,
 )
 from app.payments import InvalidPaymentWebhook, parse_lemonsqueezy_webhook
 from app.pilot import (
@@ -818,6 +824,118 @@ def create_app(
             "workspace",
             switched.workspace_id,
         )
+        return switched.public()
+
+    @app.get("/v1/account/members", response_model=list[WorkspaceMemberOut])
+    def account_workspace_members(
+        request: Request, _: Principal = Depends(require_admin)
+    ) -> list[WorkspaceMemberOut]:
+        if not resolved_settings.account_invitations_enabled:
+            raise HTTPException(status_code=404, detail="Workspace membership is not configured")
+        session = required_account_session(request)
+        return [WorkspaceMemberOut(**item) for item in account_store.list_members(session)]
+
+    @app.patch("/v1/account/members/{user_id}", response_model=WorkspaceMemberOut)
+    def update_account_workspace_member(
+        user_id: str,
+        payload: WorkspaceMemberUpdateRequest,
+        request: Request,
+        _: Principal = Depends(require_admin),
+    ) -> WorkspaceMemberOut:
+        if not resolved_settings.account_invitations_enabled:
+            raise HTTPException(status_code=404, detail="Workspace membership is not configured")
+        session = required_account_session(request)
+        try:
+            member = account_store.update_member(
+                session, user_id, payload.role, list(payload.clearances)
+            )
+        except MembershipError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        repository.audit(
+            session.principal,
+            "workspace_member_access_updated",
+            "user",
+            user_id,
+            {"role": payload.role, "clearances": payload.clearances},
+        )
+        return WorkspaceMemberOut(**member)
+
+    @app.post("/v1/account/members/{user_id}/remove", status_code=204)
+    def remove_account_workspace_member(
+        user_id: str,
+        payload: WorkspaceMemberRemoveRequest,
+        request: Request,
+        _: Principal = Depends(require_admin),
+    ) -> Response:
+        if not resolved_settings.account_invitations_enabled:
+            raise HTTPException(status_code=404, detail="Workspace membership is not configured")
+        session = required_account_session(request)
+        try:
+            account_store.remove_member(
+                session, user_id, payload.password.get_secret_value()
+            )
+        except InvitationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except MembershipError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        repository.audit(
+            session.principal,
+            "workspace_member_removed",
+            "user",
+            user_id,
+        )
+        return Response(status_code=204)
+
+    @app.post("/v1/account/ownership/transfer", status_code=204)
+    def transfer_account_workspace_ownership(
+        payload: WorkspaceOwnershipTransferRequest,
+        request: Request,
+        _: Principal = Depends(require_admin),
+    ) -> Response:
+        if not resolved_settings.account_invitations_enabled:
+            raise HTTPException(status_code=404, detail="Workspace membership is not configured")
+        session = required_account_session(request)
+        try:
+            account_store.transfer_ownership(
+                session,
+                payload.new_owner_user_id,
+                payload.password.get_secret_value(),
+            )
+        except InvitationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except MembershipError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        repository.audit(
+            session.principal,
+            "workspace_ownership_transferred",
+            "user",
+            payload.new_owner_user_id,
+        )
+        return Response(status_code=204)
+
+    @app.post("/v1/account/workspaces/current/leave", response_model=AccountOut)
+    def leave_current_account_workspace(
+        payload: WorkspaceLeaveRequest,
+        request: Request,
+        response: Response,
+        _: Principal = Depends(authenticate_key),
+    ) -> AccountOut:
+        session = required_account_session(request)
+        try:
+            switched = account_store.leave_workspace(
+                session, payload.password.get_secret_value()
+            )
+        except InvitationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except MembershipError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        repository.audit(
+            session.principal,
+            "workspace_member_left",
+            "user",
+            session.user_id,
+        )
+        set_account_cookie(response, switched.token)
         return switched.public()
 
     @app.post("/v1/account/export")

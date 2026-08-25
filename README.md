@@ -30,7 +30,8 @@ This is an intentionally honest portfolio MVP. It runs locally and demonstrates 
 - An opt-in account foundation with scrypt password hashing, database-backed revocable sessions,
   HttpOnly cookies, CSRF protection, one-time hashed email-verification/password-reset tokens,
   SMTP delivery boundaries, scoped one-time workspace invitations and switching, bounded private
-  exports, guarded deletion, and a separate private workspace for every registered user.
+  exports, guarded deletion, member access review/removal, password-confirmed ownership transfer,
+  safe workspace departure, and a separate private workspace for every registered user.
 - A replaceable original-storage boundary with backward-compatible local files and an optional
   private S3 backend using tenant-scoped object keys, authenticated streaming, server-side
   encryption, KMS support, and expected-bucket-owner protection.

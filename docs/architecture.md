@@ -69,9 +69,10 @@ Archive removes a document from normal retrieval without destroying it. Permanen
 - OIDC has unit-tested token and claim mapping, but must be integration-tested with the selected identity provider.
 - The account boundary supports SQLite locally and is exercised against PostgreSQL 16 in CI.
   Verification, recovery, invitations, switching, bounded export, and guarded deletion are
-  implemented, but public registration must still wait for managed-data/restore acceptance, real
-  SMTP/domain acceptance, privacy/retention review, abuse monitoring, and an ownership-transfer
-  workflow for shared workspaces.
+  implemented. Shared-workspace member review, access changes, removal, ownership transfer, and
+  safe departure are also implemented. Public registration must still wait for managed-data/
+  restore acceptance, real SMTP/domain acceptance, privacy/retention review, abuse monitoring,
+  and operational recovery drills.
 - The optional model gateway has strict mechanical support checks, but those checks are not a
   semantic-entailment proof. Customer-specific evaluation, provider privacy review, a provider-side
   budget, and human review for consequential use remain required.

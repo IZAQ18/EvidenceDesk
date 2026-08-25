@@ -19,7 +19,7 @@ the organization has not supplied enough information.
 | Answer quality | Organization-specific gold set, >=95% retrieval success, >=98% valid citations | Hybrid local semantic retrieval, reranking, diagnostics, and an 8-case synthetic regression benchmark implemented; customer-specific held-out evaluation pending |
 | Customer AI | Server-managed provider, quotas, cost controls, no customer key required | Gateway, fallbacks, usage controls, and fake-provider tests implemented; provider/privacy acceptance and live configuration pending |
 | Billing | Hosted checkout, verified webhooks, entitlements, portal, cancellation, refunds | Verified event intake exists; entitlements pending |
-| User control | Export, document deletion, conversation deletion, complete account deletion | Bounded workspace export and guarded account deletion implemented; shared-workspace ownership transfer and operational cleanup/retention acceptance pending |
+| User control | Export, document deletion, conversation deletion, complete account deletion | Bounded workspace export, guarded account deletion, member removal, safe departure, and ownership transfer implemented; operational cleanup/retention acceptance pending |
 | Trust | Terms, privacy, retention, subprocessors, support and honest limitations | Pilot notices exist; commercial documents pending |
 | Operations | Monitoring, error tracking, alerts, backups, incident procedure | Pending |
 | Experience | First cited answer within two minutes; desktop/mobile/accessibility acceptance | Account journey validated locally; broader acceptance pending |
@@ -164,4 +164,22 @@ The opt-in workspace and privacy controls now provide:
 SQLite acceptance tests cover invitations, replay, CSRF, switching, export content, secret
 exclusion, deletion, storage cleanup, and disabled-feature behavior. The PostgreSQL CI path covers
 the invitation/membership schema and flow. This does not claim managed SMTP, S3 cleanup, backup
-expiry, legal/privacy, or shared-workspace ownership-transfer acceptance.
+expiry, or legal/privacy acceptance.
+
+## Milestone 8 evidence
+
+The shared-workspace lifecycle now provides:
+
+- administrator member review plus bounded role and classification-clearance changes;
+- immediate revocation of the affected member's sessions after access changes or removal;
+- password-confirmed removal that preserves the person's account and unrelated workspaces;
+- password-confirmed ownership transfer only to an existing member, with automatic full-clearance
+  administrator access for the new owner and protection against owner removal/demotion;
+- safe non-owner departure that rotates the browser into another workspace and refuses to orphan
+  a one-workspace account; and
+- a tested handoff in which the former owner deletes their account while the transferred workspace
+  and its remaining membership survive.
+
+These controls close the MVP's application-level ownership-transfer gap. Managed identity,
+periodic access certification, phishing-resistant step-up authentication, real SMTP/S3 cleanup,
+backup expiry, and operational recovery still require deployment acceptance before public accounts.

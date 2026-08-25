@@ -348,6 +348,7 @@ def test_postgres_workspace_invitation_and_membership_switch(tmp_path):
         accounts_enabled=True,
         account_registration_enabled=True,
         account_invitations_enabled=True,
+        account_deletion_enabled=True,
         public_base_url="https://accounts.example.test",
         ingestion_worker_enabled=False,
         rate_limit_per_minute=10_000,
@@ -393,3 +394,45 @@ def test_postgres_workspace_invitation_and_membership_switch(tmp_path):
         memberships = client.get("/v1/account/workspaces")
         assert memberships.status_code == 200
         assert memberships.json()[0]["member_count"] == 2
+
+        client.cookies.clear()
+        owner_login = client.post(
+            "/v1/auth/login",
+            json={
+                "email": "postgres-owner@example.com",
+                "password": "integration-correct-horse-battery-staple",
+            },
+        )
+        assert owner_login.status_code == 200
+        members = client.get("/v1/account/members")
+        assert members.status_code == 200
+        assert len(members.json()) == 2
+        transferred = client.post(
+            "/v1/account/ownership/transfer",
+            headers={"X-CSRF-Token": owner_login.json()["csrf_token"]},
+            json={
+                "new_owner_user_id": accepted.json()["id"],
+                "password": "integration-correct-horse-battery-staple",
+                "confirmation": "TRANSFER",
+            },
+        )
+        assert transferred.status_code == 204, transferred.text
+        deleted = client.post(
+            "/v1/account/delete",
+            headers={"X-CSRF-Token": owner_login.json()["csrf_token"]},
+            json={
+                "password": "integration-correct-horse-battery-staple",
+                "confirmation": "DELETE",
+            },
+        )
+        assert deleted.status_code == 204, deleted.text
+        with database.connect() as connection:
+            workspace = connection.execute(
+                "SELECT created_by FROM workspaces WHERE id = ?", (owner["workspace_id"],)
+            ).fetchone()
+            member_count = connection.execute(
+                "SELECT COUNT(*) FROM workspace_members WHERE workspace_id = ?",
+                (owner["workspace_id"],),
+            ).fetchone()[0]
+        assert workspace["created_by"] == accepted.json()["id"]
+        assert member_count == 1

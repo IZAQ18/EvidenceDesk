@@ -125,6 +125,65 @@ class WorkspaceOut(BaseModel):
     member_count: int
 
 
+class WorkspaceMemberOut(BaseModel):
+    id: str
+    email: str
+    display_name: str
+    role: Literal["reader", "editor", "admin"]
+    clearances: list[Classification]
+    joined_at: datetime
+    is_owner: bool
+
+
+class WorkspaceMemberUpdateRequest(BaseModel):
+    role: Literal["reader", "editor", "admin"]
+    clearances: list[Classification]
+
+    @field_validator("clearances")
+    @classmethod
+    def unique_member_clearances(cls, value: list[Classification]) -> list[Classification]:
+        if not value:
+            raise ValueError("Choose at least one classification clearance")
+        return list(dict.fromkeys(value))
+
+
+class WorkspaceMemberRemoveRequest(BaseModel):
+    password: SecretStr = Field(min_length=1, max_length=128)
+    confirmation: str = Field(min_length=6, max_length=20)
+
+    @field_validator("confirmation")
+    @classmethod
+    def validate_confirmation(cls, value: str) -> str:
+        if value.strip() != "REMOVE":
+            raise ValueError("Type REMOVE to confirm")
+        return "REMOVE"
+
+
+class WorkspaceOwnershipTransferRequest(BaseModel):
+    new_owner_user_id: str = Field(min_length=1, max_length=100)
+    password: SecretStr = Field(min_length=1, max_length=128)
+    confirmation: str = Field(min_length=8, max_length=20)
+
+    @field_validator("confirmation")
+    @classmethod
+    def validate_confirmation(cls, value: str) -> str:
+        if value.strip() != "TRANSFER":
+            raise ValueError("Type TRANSFER to confirm")
+        return "TRANSFER"
+
+
+class WorkspaceLeaveRequest(BaseModel):
+    password: SecretStr = Field(min_length=1, max_length=128)
+    confirmation: str = Field(min_length=5, max_length=20)
+
+    @field_validator("confirmation")
+    @classmethod
+    def validate_confirmation(cls, value: str) -> str:
+        if value.strip() != "LEAVE":
+            raise ValueError("Type LEAVE to confirm")
+        return "LEAVE"
+
+
 class WorkspaceInvitationOut(BaseModel):
     id: str
     email: str
