@@ -7,7 +7,7 @@ EvidenceDesk optimizes for traceable answers, access decisions before retrieval,
 ## Components
 
 1. **FastAPI edge:** validates requests, authenticates account sessions, API keys, or OIDC bearer tokens, applies rate limits and security headers, and exposes document, answer, conversation, feedback, report, and insight endpoints.
-2. **Account boundary:** optional self-registration creates an isolated workspace and administrator membership. Passwords use salted scrypt hashes; random sessions are stored only as SHA-256 token hashes, sent through HttpOnly cookies, expire server-side, and require a per-session CSRF token for mutations.
+2. **Account boundary:** optional self-registration creates an isolated workspace and administrator membership. Passwords use salted scrypt hashes; random sessions are stored only as SHA-256 token hashes, sent through HttpOnly cookies, expire server-side, and require a per-session CSRF token for mutations. Optional verification and recovery use separate purpose-bound, expiring, rotating, one-time token hashes; password reset revokes all sessions.
 3. **Policy layer:** maps identity to subject, tenant, role, and classification clearances. Those constraints are SQL predicates used before evidence reaches the answer workflow.
 4. **Ingestion:** stages an authorized upload, records a durable job, and returns immediately. A database-leased worker rechecks type, byte count, digest, and PDF signature; enforces page, OCR-page, and resolution limits; extracts embedded text; OCRs weak PDF pages when available; records extraction diagnostics; and atomically creates page-aware chunks and the searchable document. Failed jobs keep a safe explanation and can be retried within a configured attempt limit.
 5. **Original store:** writes each original behind a small storage interface. Local mode uses generated tenant/document paths, containment checks, fsync, and an atomic final rename. Optional S3 mode uses tenant-scoped keys, server-side AES-256 or KMS encryption, expected-owner checks, and authenticated application streaming; it never creates a public object URL.
@@ -43,6 +43,8 @@ EvidenceDesk optimizes for traceable answers, access decisions before retrieval,
 - `model_usage_daily` and `model_usage_events`: conservative daily budget reservations and
   text-free provider usage/fallback metadata. They do not store prompts, answers, excerpts, or
   document text.
+- `account_tokens`: one-way token hashes, user, purpose, expiry, and consumption time; never the
+  emailed verification/reset token.
 
 Archive removes a document from normal retrieval without destroying it. Permanent delete removes metadata, pages, chunks, index rows, and the original file. Superseding a version marks the older record as superseded.
 
@@ -63,9 +65,9 @@ Archive removes a document from normal retrieval without destroying it. Permanen
   lifecycle, access logging, malware quarantine, and restore behavior still require integration
   testing in the selected AWS account.
 - OIDC has unit-tested token and claim mapping, but must be integration-tested with the selected identity provider.
-- The account boundary is intentionally backed by SQLite for local acceptance testing. Public
-  registration must wait for managed PostgreSQL, verified email, password recovery, invitations,
-  deletion/export controls, and abuse monitoring.
+- The account boundary is intentionally backed by SQLite for local acceptance testing. Verification
+  and recovery logic is implemented, but public registration must wait for managed PostgreSQL,
+  real SMTP/domain acceptance, invitations, deletion/export controls, and abuse monitoring.
 - The optional model gateway has strict mechanical support checks, but those checks are not a
   semantic-entailment proof. Customer-specific evaluation, provider privacy review, a provider-side
   budget, and human review for consequential use remain required.

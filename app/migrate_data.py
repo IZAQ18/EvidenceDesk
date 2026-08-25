@@ -19,6 +19,7 @@ TABLE_ORDER = (
     "workspaces",
     "workspace_members",
     "auth_sessions",
+    "account_tokens",
     "documents",
     "chunks",
     "document_pages",

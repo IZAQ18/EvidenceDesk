@@ -169,6 +169,17 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_expiry ON auth_sessions(expires_at);
 
+CREATE TABLE IF NOT EXISTS account_tokens (
+    token_hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    purpose TEXT NOT NULL CHECK (purpose IN ('verify_email','reset_password')),
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_account_tokens_user
+    ON account_tokens(user_id, purpose, expires_at);
+
 CREATE TABLE IF NOT EXISTS ingestion_jobs (
     id TEXT PRIMARY KEY,
     document_id TEXT NOT NULL,
@@ -493,6 +504,21 @@ POSTGRES_MIGRATIONS: tuple[tuple[int, tuple[str, ...]], ...] = (
             )""",
             """CREATE INDEX IF NOT EXISTS idx_model_usage_events_tenant
                ON model_usage_events(tenant_id, created_at DESC)""",
+        ),
+    ),
+    (
+        5,
+        (
+            """CREATE TABLE IF NOT EXISTS account_tokens (
+                token_hash TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                purpose TEXT NOT NULL CHECK (purpose IN ('verify_email','reset_password')),
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                used_at TEXT
+            )""",
+            """CREATE INDEX IF NOT EXISTS idx_account_tokens_user
+               ON account_tokens(user_id, purpose, expires_at)""",
         ),
     ),
 )

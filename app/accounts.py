@@ -107,6 +107,13 @@ class AccountSession:
         )
 
 
+@dataclass(frozen=True)
+class AccountEmailAction:
+    token: str
+    email: str
+    display_name: str
+
+
 class AccountStore:
     """Small account boundary that can later be replaced by a managed identity service."""
 
@@ -174,6 +181,226 @@ class AccountStore:
             plan="free",
             expires_at=expires_at,
         )
+
+    def register_pending(
+        self,
+        email: str,
+        display_name: str,
+        password: str,
+        token_hours: int,
+    ) -> AccountEmailAction:
+        now = _now()
+        user_id = str(uuid4())
+        workspace_id = str(uuid4())
+        workspace_name = f"{display_name}'s workspace"
+        try:
+            with self.database.connect() as connection:
+                connection.execute(
+                    """INSERT INTO users
+                       (id, email, display_name, password_hash, status, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, 'pending_verification', ?, ?)""",
+                    (
+                        user_id,
+                        email,
+                        display_name,
+                        hash_password(password),
+                        now.isoformat(),
+                        now.isoformat(),
+                    ),
+                )
+                connection.execute(
+                    """INSERT INTO workspaces (id, name, plan, created_by, created_at)
+                       VALUES (?, ?, 'free', ?, ?)""",
+                    (workspace_id, workspace_name, user_id, now.isoformat()),
+                )
+                connection.execute(
+                    """INSERT INTO workspace_members
+                       (workspace_id, user_id, role, clearances_json, created_at)
+                       VALUES (?, ?, 'admin', ?, ?)""",
+                    (
+                        workspace_id,
+                        user_id,
+                        json.dumps(["public", "internal", "confidential"]),
+                        now.isoformat(),
+                    ),
+                )
+                token = self._issue_token(
+                    connection,
+                    user_id,
+                    "verify_email",
+                    now,
+                    now + timedelta(hours=token_hours),
+                )
+        except Exception as exc:
+            constraint = getattr(getattr(exc, "diag", None), "constraint_name", None)
+            if "users.email" in str(exc).lower() or constraint in {
+                "users_email_key",
+                "idx_users_email_ci",
+            }:
+                raise AccountExistsError("An account with this email already exists") from exc
+            raise
+        return AccountEmailAction(token=token, email=email, display_name=display_name)
+
+    @staticmethod
+    def _issue_token(
+        connection: Any,
+        user_id: str,
+        purpose: str,
+        created_at: datetime,
+        expires_at: datetime,
+    ) -> str:
+        token = secrets.token_urlsafe(32)
+        connection.execute(
+            """UPDATE account_tokens SET used_at = ?
+               WHERE user_id = ? AND purpose = ? AND used_at IS NULL""",
+            (created_at.isoformat(), user_id, purpose),
+        )
+        connection.execute(
+            """INSERT INTO account_tokens
+               (token_hash, user_id, purpose, created_at, expires_at, used_at)
+               VALUES (?, ?, ?, ?, ?, NULL)""",
+            (
+                AccountStore._token_hash(token),
+                user_id,
+                purpose,
+                created_at.isoformat(),
+                expires_at.isoformat(),
+            ),
+        )
+        return token
+
+    def issue_verification(self, email: str, token_hours: int) -> AccountEmailAction | None:
+        now = _now()
+        email_predicate = (
+            "LOWER(email) = LOWER(?)"
+            if self.database.dialect == "postgres"
+            else "email = ? COLLATE NOCASE"
+        )
+        with self.database.connect() as connection:
+            row = connection.execute(
+                f"""SELECT id, email, display_name FROM users
+                    WHERE {email_predicate} AND status = 'pending_verification'""",  # noqa: S608
+                (email,),
+            ).fetchone()
+            if not row:
+                return None
+            token = self._issue_token(
+                connection,
+                row["id"],
+                "verify_email",
+                now,
+                now + timedelta(hours=token_hours),
+            )
+        return AccountEmailAction(token, row["email"], row["display_name"])
+
+    def verify_email(self, token: str) -> AccountSession | None:
+        if len(token) > 200:
+            return None
+        now = _now()
+        session_token = secrets.token_urlsafe(32)
+        csrf_token = secrets.token_urlsafe(24)
+        session_expires = now + timedelta(hours=self.session_hours)
+        with self.database.connect() as connection:
+            row = connection.execute(
+                """SELECT u.id user_id, u.email, u.display_name, u.status,
+                          w.id workspace_id, w.name workspace_name, w.plan,
+                          m.role, m.clearances_json
+                   FROM account_tokens t
+                   JOIN users u ON u.id = t.user_id
+                   JOIN workspace_members m ON m.user_id = u.id
+                   JOIN workspaces w ON w.id = m.workspace_id
+                   WHERE t.token_hash = ? AND t.purpose = 'verify_email'
+                     AND t.used_at IS NULL AND t.expires_at > ?
+                   ORDER BY m.created_at LIMIT 1""",
+                (self._token_hash(token), now.isoformat()),
+            ).fetchone()
+            if not row or row["status"] != "pending_verification":
+                return None
+            claimed = connection.execute(
+                """UPDATE account_tokens SET used_at = ?
+                   WHERE token_hash = ? AND used_at IS NULL""",
+                (now.isoformat(), self._token_hash(token)),
+            )
+            if claimed.rowcount != 1:
+                return None
+            connection.execute(
+                """UPDATE users
+                   SET status = 'active', email_verified_at = ?, updated_at = ?
+                   WHERE id = ? AND status = 'pending_verification'""",
+                (now.isoformat(), now.isoformat(), row["user_id"]),
+            )
+            self._insert_session(
+                connection,
+                session_token,
+                csrf_token,
+                row["user_id"],
+                row["workspace_id"],
+                now,
+                session_expires,
+            )
+        return self._from_row(row, session_token, csrf_token, session_expires)
+
+    def issue_password_reset(
+        self, email: str, token_minutes: int
+    ) -> AccountEmailAction | None:
+        now = _now()
+        email_predicate = (
+            "LOWER(email) = LOWER(?)"
+            if self.database.dialect == "postgres"
+            else "email = ? COLLATE NOCASE"
+        )
+        with self.database.connect() as connection:
+            row = connection.execute(
+                f"""SELECT id, email, display_name FROM users
+                    WHERE {email_predicate} AND status = 'active'""",  # noqa: S608
+                (email,),
+            ).fetchone()
+            if not row:
+                return None
+            token = self._issue_token(
+                connection,
+                row["id"],
+                "reset_password",
+                now,
+                now + timedelta(minutes=token_minutes),
+            )
+        return AccountEmailAction(token, row["email"], row["display_name"])
+
+    def reset_password(self, token: str, password: str) -> bool:
+        if len(token) > 200:
+            return False
+        now = _now()
+        token_hash = self._token_hash(token)
+        with self.database.connect() as connection:
+            row = connection.execute(
+                """SELECT t.user_id FROM account_tokens t
+                   JOIN users u ON u.id = t.user_id
+                   WHERE t.token_hash = ? AND t.purpose = 'reset_password'
+                     AND t.used_at IS NULL AND t.expires_at > ? AND u.status = 'active'""",
+                (token_hash, now.isoformat()),
+            ).fetchone()
+            if not row:
+                return False
+            claimed = connection.execute(
+                """UPDATE account_tokens SET used_at = ?
+                   WHERE token_hash = ? AND used_at IS NULL""",
+                (now.isoformat(), token_hash),
+            )
+            if claimed.rowcount != 1:
+                return False
+            connection.execute(
+                """UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?""",
+                (hash_password(password), now.isoformat(), row["user_id"]),
+            )
+            connection.execute(
+                "DELETE FROM auth_sessions WHERE user_id = ?", (row["user_id"],)
+            )
+            connection.execute(
+                """UPDATE account_tokens SET used_at = ?
+                   WHERE user_id = ? AND purpose = 'reset_password' AND used_at IS NULL""",
+                (now.isoformat(), row["user_id"]),
+            )
+        return True
 
     def login(self, email: str, password: str) -> AccountSession | None:
         email_predicate = (
@@ -296,24 +523,89 @@ class AccountStore:
         )
 
 
-def account_page(registration_enabled: bool) -> str:
+def account_page(
+    registration_enabled: bool,
+    verification_required: bool = False,
+    password_reset_enabled: bool = False,
+) -> str:
     registration_tab = (
         '<button class="mode" data-mode="register" type="button">Create account</button>'
         if registration_enabled
         else ""
     )
     registration_note = (
-        "Create a private workspace in under a minute."
+        (
+            "Create a private workspace, then verify your email to activate it."
+            if verification_required
+            else "Create a private workspace in under a minute."
+        )
         if registration_enabled
         else "New account registration is currently invite-only."
+    )
+    forgot_link = (
+        '<a class="account-link" href="/forgot-password">Forgot your password?</a>'
+        if password_reset_enabled
+        else ""
+    )
+    registration_prompt = json.dumps(
+        "We will email a one-time link before activating your private workspace."
+        if verification_required
+        else "Your documents and conversations stay inside your workspace."
     )
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive">
 <title>Sign in · EvidenceDesk</title><style>
 :root{{color-scheme:dark;--gold:#ffc35c;--green:#3deba0;--ink:#f6f7ef;--muted:#9ca9a1;--line:#213c2e}}
-*{{box-sizing:border-box}}body{{margin:0;min-height:100vh;background:#050907;color:var(--ink);font:14px/1.55 Inter,"Segoe UI",system-ui,sans-serif;display:grid;place-items:center;padding:24px;overflow-x:hidden}}body:before{{content:"";position:fixed;inset:0;background:radial-gradient(circle at 18% 12%,#744cff2c,transparent 30%),radial-gradient(circle at 82% 85%,#25d99720,transparent 34%),linear-gradient(#ffffff05 1px,transparent 1px),linear-gradient(90deg,#ffffff04 1px,transparent 1px);background-size:auto,auto,54px 54px,54px 54px;pointer-events:none}}.shell{{position:relative;width:min(980px,100%);display:grid;grid-template-columns:1.08fr .92fr;border:1px solid var(--line);border-radius:25px;overflow:hidden;background:#09110ded;box-shadow:0 45px 140px #000b}}.story{{padding:60px;background:linear-gradient(145deg,#101c16,#07100c);min-height:610px;display:flex;flex-direction:column}}.brand{{display:flex;align-items:center;gap:12px;font:650 23px Georgia,serif}}.sigil{{width:42px;height:42px;display:grid;place-items:center;border:1px solid #ffc35c99;border-radius:12px;color:var(--gold);font:800 10px ui-monospace,monospace}}.kicker{{margin-top:auto;color:var(--green);font:800 10px ui-monospace,monospace;letter-spacing:.18em;text-transform:uppercase}}h1{{font:650 clamp(40px,6vw,70px)/.95 Georgia,serif;letter-spacing:-.055em;margin:16px 0 22px;max-width:590px}}h1 span{{display:block;color:var(--gold)}}.deck{{max-width:520px;color:#b6c3bb;font-size:16px}}.proof{{display:flex;gap:9px;flex-wrap:wrap;margin-top:30px}}.proof span{{border:1px solid var(--line);border-radius:22px;padding:7px 10px;color:var(--muted);font-size:10px}}.auth{{padding:48px 42px;background:#0c1511;display:flex;flex-direction:column;justify-content:center}}.maker{{display:flex;align-items:center;gap:10px;margin-bottom:30px}}.maker img{{width:42px;height:42px;border-radius:12px;object-fit:cover;border:1px solid #ffc35c66}}.maker b{{display:block;color:var(--gold);letter-spacing:.15em;font-size:11px}}.maker small{{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.11em}}.modes{{display:flex;gap:5px;padding:4px;border:1px solid var(--line);border-radius:12px;margin:18px 0;background:#07100c}}.mode{{flex:1;border:0;border-radius:8px;padding:9px;background:transparent;color:var(--muted);font-weight:750}}.mode.active{{background:#17261e;color:var(--ink)}}label{{display:block;margin:14px 0 6px;color:var(--muted);font-size:9px;font-weight:800;letter-spacing:.13em;text-transform:uppercase}}input{{width:100%;padding:12px;border:1px solid var(--line);border-radius:10px;background:#07100c;color:var(--ink);font:inherit}}input:focus{{outline:3px solid #3deba02c;border-color:var(--green)}}button.submit{{width:100%;margin-top:20px;padding:12px;border:0;border-radius:11px;background:linear-gradient(135deg,#ffd47e,#b67921);color:#151008;font-weight:850;cursor:pointer}}button:disabled{{opacity:.55;cursor:wait}}.status{{min-height:22px;margin-top:12px;color:var(--muted);font-size:12px}}.status.error{{color:#ff9a92}}.fine{{margin-top:20px;color:#75847b;font-size:10px}}.hidden{{display:none}}@media(max-width:760px){{.shell{{grid-template-columns:1fr}}.story{{min-height:330px;padding:34px}}.auth{{padding:34px 26px}}h1{{font-size:46px}}}}
-</style></head><body><main class="shell"><section class="story"><div class="brand"><span class="sigil">ED</span>EvidenceDesk</div><div class="kicker">Private evidence workspace</div><h1>Answers should earn trust.<span>Start with the source.</span></h1><p class="deck">Upload approved organizational documents, ask in normal language, and inspect the exact evidence behind each supported answer.</p><div class="proof"><span>Private workspace</span><span>Page citations</span><span>Safe refusal</span><span>OCR ready</span></div></section><section class="auth"><div class="maker"><img src="/developer-signature.png" alt="IZAQ developer portrait"><div><b>IZAQ</b><small>Product direction · design × engineering</small></div></div><div><h2 id="title">Welcome back</h2><p id="subtitle" style="color:var(--muted)">{registration_note}</p></div><div class="modes"><button class="mode active" data-mode="login" type="button">Sign in</button>{registration_tab}</div><form id="form"><div id="nameBlock" class="hidden"><label for="name">Your name</label><input id="name" autocomplete="name" maxlength="80"></div><label for="email">Email address</label><input id="email" type="email" autocomplete="email" maxlength="254" required><label for="password">Password</label><input id="password" type="password" autocomplete="current-password" maxlength="128" required><button id="submit" class="submit">Enter EvidenceDesk →</button><div id="status" class="status" role="status" aria-live="polite"></div></form><p class="fine">Sessions use secure HttpOnly cookies. Your workspace is isolated from other users before document retrieval.</p></section></main><script>
+*{{box-sizing:border-box}}body{{margin:0;min-height:100vh;background:#050907;color:var(--ink);font:14px/1.55 Inter,"Segoe UI",system-ui,sans-serif;display:grid;place-items:center;padding:24px;overflow-x:hidden}}body:before{{content:"";position:fixed;inset:0;background:radial-gradient(circle at 18% 12%,#744cff2c,transparent 30%),radial-gradient(circle at 82% 85%,#25d99720,transparent 34%),linear-gradient(#ffffff05 1px,transparent 1px),linear-gradient(90deg,#ffffff04 1px,transparent 1px);background-size:auto,auto,54px 54px,54px 54px;pointer-events:none}}.shell{{position:relative;width:min(980px,100%);display:grid;grid-template-columns:1.08fr .92fr;border:1px solid var(--line);border-radius:25px;overflow:hidden;background:#09110ded;box-shadow:0 45px 140px #000b}}.story{{padding:60px;background:linear-gradient(145deg,#101c16,#07100c);min-height:610px;display:flex;flex-direction:column}}.brand{{display:flex;align-items:center;gap:12px;font:650 23px Georgia,serif}}.sigil{{width:42px;height:42px;display:grid;place-items:center;border:1px solid #ffc35c99;border-radius:12px;color:var(--gold);font:800 10px ui-monospace,monospace}}.kicker{{margin-top:auto;color:var(--green);font:800 10px ui-monospace,monospace;letter-spacing:.18em;text-transform:uppercase}}h1{{font:650 clamp(40px,6vw,70px)/.95 Georgia,serif;letter-spacing:-.055em;margin:16px 0 22px;max-width:590px}}h1 span{{display:block;color:var(--gold)}}.deck{{max-width:520px;color:#b6c3bb;font-size:16px}}.proof{{display:flex;gap:9px;flex-wrap:wrap;margin-top:30px}}.proof span{{border:1px solid var(--line);border-radius:22px;padding:7px 10px;color:var(--muted);font-size:10px}}.auth{{padding:48px 42px;background:#0c1511;display:flex;flex-direction:column;justify-content:center}}.maker{{display:flex;align-items:center;gap:10px;margin-bottom:30px}}.maker img{{width:42px;height:42px;border-radius:12px;object-fit:cover;border:1px solid #ffc35c66}}.maker b{{display:block;color:var(--gold);letter-spacing:.15em;font-size:11px}}.maker small{{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.11em}}.modes{{display:flex;gap:5px;padding:4px;border:1px solid var(--line);border-radius:12px;margin:18px 0;background:#07100c}}.mode{{flex:1;border:0;border-radius:8px;padding:9px;background:transparent;color:var(--muted);font-weight:750}}.mode.active{{background:#17261e;color:var(--ink)}}label{{display:block;margin:14px 0 6px;color:var(--muted);font-size:9px;font-weight:800;letter-spacing:.13em;text-transform:uppercase}}input{{width:100%;padding:12px;border:1px solid var(--line);border-radius:10px;background:#07100c;color:var(--ink);font:inherit}}input:focus{{outline:3px solid #3deba02c;border-color:var(--green)}}button.submit{{width:100%;margin-top:20px;padding:12px;border:0;border-radius:11px;background:linear-gradient(135deg,#ffd47e,#b67921);color:#151008;font-weight:850;cursor:pointer}}button:disabled{{opacity:.55;cursor:wait}}.status{{min-height:22px;margin-top:12px;color:var(--muted);font-size:12px}}.status.error{{color:#ff9a92}}.fine{{margin-top:20px;color:#75847b;font-size:10px}}.account-link{{display:inline-block;margin-top:8px;color:var(--gold);font-size:11px;text-decoration:none}}.account-link:hover{{text-decoration:underline}}.hidden{{display:none}}@media(max-width:760px){{.shell{{grid-template-columns:1fr}}.story{{min-height:330px;padding:34px}}.auth{{padding:34px 26px}}h1{{font-size:46px}}}}
+</style></head><body><main class="shell"><section class="story"><div class="brand"><span class="sigil">ED</span>EvidenceDesk</div><div class="kicker">Private evidence workspace</div><h1>Answers should earn trust.<span>Start with the source.</span></h1><p class="deck">Upload approved organizational documents, ask in normal language, and inspect the exact evidence behind each supported answer.</p><div class="proof"><span>Private workspace</span><span>Page citations</span><span>Safe refusal</span><span>OCR ready</span></div></section><section class="auth"><div class="maker"><img src="/developer-signature.png" alt="IZAQ developer portrait"><div><b>IZAQ</b><small>Product direction · design × engineering</small></div></div><div><h2 id="title">Welcome back</h2><p id="subtitle" style="color:var(--muted)">{registration_note}</p></div><div class="modes"><button class="mode active" data-mode="login" type="button">Sign in</button>{registration_tab}</div><form id="form"><div id="nameBlock" class="hidden"><label for="name">Your name</label><input id="name" autocomplete="name" maxlength="80"></div><label for="email">Email address</label><input id="email" type="email" autocomplete="email" maxlength="254" required><label for="password">Password</label><input id="password" type="password" autocomplete="current-password" maxlength="128" required><button id="submit" class="submit">Enter EvidenceDesk →</button><div id="status" class="status" role="status" aria-live="polite"></div></form>{forgot_link}<p class="fine">Sessions use secure HttpOnly cookies. Your workspace is isolated from other users before document retrieval.</p></section></main><script>
 const modes=[...document.querySelectorAll('[data-mode]')],nameBlock=document.querySelector('#nameBlock'),form=document.querySelector('#form'),status=document.querySelector('#status'),submit=document.querySelector('#submit');let mode='login';
-modes.forEach(button=>button.onclick=()=>{{mode=button.dataset.mode;modes.forEach(item=>item.classList.toggle('active',item===button));let register=mode==='register';nameBlock.classList.toggle('hidden',!register);document.querySelector('#name').required=register;document.querySelector('#password').autocomplete=register?'new-password':'current-password';document.querySelector('#title').textContent=register?'Create your private workspace':'Welcome back';document.querySelector('#subtitle').textContent=register?'Your documents and conversations stay inside your workspace.':'Sign in to continue to your evidence workspace.';submit.textContent=register?'Create workspace →':'Enter EvidenceDesk →'}});
-form.onsubmit=async event=>{{event.preventDefault();status.textContent=mode==='register'?'Creating your secure workspace…':'Verifying your account…';status.className='status';submit.disabled=true;let body={{email:document.querySelector('#email').value,password:document.querySelector('#password').value}};if(mode==='register')body.display_name=document.querySelector('#name').value;try{{let response=await fetch('/v1/auth/'+mode,{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(body)}}),data=await response.json().catch(()=>({{detail:'Unexpected response'}}));if(!response.ok)throw new Error(typeof data.detail==='string'?data.detail:'Please check the form and try again.');location.replace('/')}}catch(error){{status.textContent=error.message;status.className='status error';submit.disabled=false}}}};
+modes.forEach(button=>button.onclick=()=>{{mode=button.dataset.mode;modes.forEach(item=>item.classList.toggle('active',item===button));let register=mode==='register';nameBlock.classList.toggle('hidden',!register);document.querySelector('#name').required=register;document.querySelector('#password').autocomplete=register?'new-password':'current-password';document.querySelector('#title').textContent=register?'Create your private workspace':'Welcome back';document.querySelector('#subtitle').textContent=register?{registration_prompt}:'Sign in to continue to your evidence workspace.';submit.textContent=register?'Create workspace →':'Enter EvidenceDesk →'}});
+form.onsubmit=async event=>{{event.preventDefault();status.textContent=mode==='register'?'Creating your secure workspace…':'Verifying your account…';status.className='status';submit.disabled=true;let body={{email:document.querySelector('#email').value,password:document.querySelector('#password').value}};if(mode==='register')body.display_name=document.querySelector('#name').value;try{{let response=await fetch('/v1/auth/'+mode,{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(body)}}),data=await response.json().catch(()=>({{detail:'Unexpected response'}}));if(!response.ok)throw new Error(typeof data.detail==='string'?data.detail:'Please check the form and try again.');if(data.action_required==='verify_email'){{status.textContent=data.message;submit.disabled=false;return}}location.replace('/')}}catch(error){{status.textContent=error.message;status.className='status error';submit.disabled=false}}}};
 </script></body></html>"""
+
+
+def account_recovery_page(mode: str, token: str | None = None) -> str:
+    if mode not in {"forgot", "reset", "verify"}:
+        raise ValueError("Unknown account recovery page")
+    token_json = json.dumps(token or "").replace("<", "\\u003c")
+    configuration = {
+        "forgot": {
+            "title": "Recover your account",
+            "description": "Enter your email. If an active account exists, we will send a one-time reset link.",
+            "label": "Email address",
+            "input": '<input id="value" type="email" autocomplete="email" maxlength="254" required>',
+            "button": "Send reset link",
+            "endpoint": "/v1/auth/password-reset/request",
+            "body": "{email:value.value}",
+            "success": "data.message",
+            "redirect": "",
+        },
+        "reset": {
+            "title": "Choose a new password",
+            "description": "This one-time link expires quickly and will sign out every existing session.",
+            "label": "New password",
+            "input": '<input id="value" type="password" autocomplete="new-password" minlength="12" maxlength="128" required>',
+            "button": "Reset password",
+            "endpoint": "/v1/auth/password-reset/complete",
+            "body": f"{{token:{token_json},password:value.value}}",
+            "success": "data.message",
+            "redirect": "setTimeout(()=>location.replace('/signin'),900);",
+        },
+        "verify": {
+            "title": "Verify your email",
+            "description": "Confirm this address to activate your private EvidenceDesk workspace.",
+            "label": "",
+            "input": "",
+            "button": "Verify and enter EvidenceDesk",
+            "endpoint": "/v1/auth/verify-email",
+            "body": f"{{token:{token_json}}}",
+            "success": "'Email verified. Opening your workspace…'",
+            "redirect": "setTimeout(()=>location.replace('/'),500);",
+        },
+    }[mode]
+    label = (
+        f'<label for="value">{configuration["label"]}</label>'
+        if configuration["label"]
+        else ""
+    )
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive"><title>{configuration["title"]} · EvidenceDesk</title><style>:root{{color-scheme:dark;--gold:#ffc35c;--green:#3deba0;--ink:#f6f7ef;--muted:#9ca9a1;--line:#213c2e}}*{{box-sizing:border-box}}body{{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at 15% 12%,#744cff2c,transparent 30%),#050907;color:var(--ink);font:14px/1.55 Inter,"Segoe UI",system-ui,sans-serif}}main{{width:min(500px,100%);padding:42px;border:1px solid var(--line);border-radius:24px;background:#0c1511;box-shadow:0 35px 110px #000b}}.brand{{color:var(--gold);font:700 13px ui-monospace,monospace;letter-spacing:.16em}}h1{{font:650 42px/1 Georgia,serif;letter-spacing:-.04em;margin:24px 0 14px}}p{{color:var(--muted)}}label{{display:block;margin:24px 0 7px;color:var(--muted);font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.12em}}input{{width:100%;padding:13px;border:1px solid var(--line);border-radius:11px;background:#07100c;color:var(--ink);font:inherit}}button{{width:100%;margin-top:24px;padding:13px;border:0;border-radius:11px;background:linear-gradient(135deg,#ffd47e,#b67921);color:#151008;font-weight:850;cursor:pointer}}button:disabled{{opacity:.55}}#status{{min-height:24px;margin-top:14px;color:var(--green)}}#status.error{{color:#ff9a92}}a{{color:var(--gold)}}</style></head><body><main><div class="brand">EVIDENCEDESK · ACCOUNT SAFETY</div><h1>{configuration["title"]}</h1><p>{configuration["description"]}</p><form id="form">{label}{configuration["input"]}<button id="submit">{configuration["button"]}</button><div id="status" role="status" aria-live="polite"></div></form><p><a href="/signin">Return to sign in</a></p></main><script>const form=document.querySelector('#form'),submit=document.querySelector('#submit'),status=document.querySelector('#status'),value=document.querySelector('#value');form.onsubmit=async event=>{{event.preventDefault();submit.disabled=true;status.className='';status.textContent='Working…';try{{const response=await fetch('{configuration["endpoint"]}',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({configuration["body"]})}}),data=await response.json().catch(()=>({{detail:'Unexpected response'}}));if(!response.ok)throw new Error(typeof data.detail==='string'?data.detail:'Request failed');status.textContent={configuration["success"]};{configuration["redirect"]}}}catch(error){{status.textContent=error.message;status.className='error';submit.disabled=false}}}};</script></body></html>"""

@@ -29,6 +29,17 @@ class Settings(BaseSettings):
     accounts_enabled: bool = False
     account_registration_enabled: bool = False
     account_session_hours: int = Field(default=24 * 7, ge=1, le=24 * 30)
+    account_email_verification_required: bool = False
+    account_password_reset_enabled: bool = False
+    account_verification_token_hours: int = Field(default=24, ge=1, le=168)
+    account_password_reset_token_minutes: int = Field(default=30, ge=10, le=120)
+    email_delivery_backend: Literal["disabled", "smtp"] = "disabled"
+    smtp_host: str | None = None
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_username: str | None = None
+    smtp_password: SecretStr | None = None
+    smtp_from_address: str | None = None
+    smtp_starttls: bool = True
     oidc_issuer: str | None = None
     oidc_audience: str | None = None
     oidc_jwks_url: str | None = None
@@ -162,6 +173,37 @@ class Settings(BaseSettings):
             )
         if self.account_registration_enabled and not self.accounts_enabled:
             raise RuntimeError("Account registration requires EVIDENCEDESK_ACCOUNTS_ENABLED=true")
+        account_email_features = (
+            self.account_email_verification_required or self.account_password_reset_enabled
+        )
+        if account_email_features and not self.accounts_enabled:
+            raise RuntimeError("Account email features require EVIDENCEDESK_ACCOUNTS_ENABLED=true")
+        if account_email_features and self.env == "production":
+            if self.email_delivery_backend != "smtp":
+                raise RuntimeError("Production account email features require SMTP delivery")
+            missing_email = [
+                name
+                for name, value in {
+                    "EVIDENCEDESK_SMTP_HOST": self.smtp_host,
+                    "EVIDENCEDESK_SMTP_FROM_ADDRESS": self.smtp_from_address,
+                    "EVIDENCEDESK_PUBLIC_BASE_URL": self.public_base_url,
+                }.items()
+                if not value or not value.strip()
+            ]
+            if missing_email:
+                raise RuntimeError(
+                    "Account email configuration is incomplete: " + ", ".join(missing_email)
+                )
+            if not self.public_base_url or not self.public_base_url.startswith("https://"):
+                raise RuntimeError("Production account links require an HTTPS public base URL")
+            if not self.smtp_starttls:
+                raise RuntimeError("Production SMTP delivery must use STARTTLS")
+        smtp_username = (self.smtp_username or "").strip()
+        smtp_password = (
+            self.smtp_password.get_secret_value().strip() if self.smtp_password else ""
+        )
+        if bool(smtp_username) != bool(smtp_password):
+            raise RuntimeError("SMTP username and password must be configured together")
         if self.auth_mode in {"oidc", "hybrid"}:
             missing = [
                 name

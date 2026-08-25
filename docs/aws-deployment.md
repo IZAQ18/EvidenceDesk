@@ -144,8 +144,8 @@ retain backups according to a written retention/deletion policy rather than dele
   dead-letter queue.
 - Add central logs, metrics, alarms, distributed throttling, incident procedures, and dependency
   scanning.
-- Complete email verification, password reset, invitations, account deletion/export, privacy
-  terms, and customer-specific quality/security acceptance.
+- Accept a real sender domain and SMTP provider; complete invitations, account deletion/export,
+  privacy terms, and customer-specific quality/security acceptance.
 - Exercise secret rotation, backup restore, failover, and rollback in the selected AWS account.
 
 These are launch gates. A passing local/CI suite and an unapplied CloudFormation template do not

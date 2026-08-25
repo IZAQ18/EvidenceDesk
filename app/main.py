@@ -25,9 +25,17 @@ from fastapi.responses import (
 )
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from app.accounts import ACCOUNT_COOKIE, AccountExistsError, AccountStore, account_page
+from app.accounts import (
+    ACCOUNT_COOKIE,
+    AccountEmailAction,
+    AccountExistsError,
+    AccountStore,
+    account_page,
+    account_recovery_page,
+)
 from app.config import Classification, Settings, get_settings
 from app.db import build_database
+from app.email_delivery import AccountEmailSender, build_account_email_sender
 from app.ingestion import (
     ExtractedDocument,
     ExtractedPage,
@@ -39,9 +47,13 @@ from app.ingestion import (
 from app.ingestion_worker import run_ingestion_worker, stop_ingestion_worker
 from app.model_gateway import ModelGateway, ModelTransport
 from app.models import (
+    AccountActionOut,
+    AccountEmailRequest,
     AccountLoginRequest,
     AccountOut,
+    AccountPasswordResetRequest,
     AccountRegistrationRequest,
+    AccountTokenRequest,
     AnswerRequest,
     AnswerResponse,
     BulkDocumentRequest,
@@ -145,6 +157,7 @@ def create_app(
     settings: Settings | None = None,
     *,
     model_transport: ModelTransport | None = None,
+    account_email_sender: AccountEmailSender | None = None,
 ) -> FastAPI:
     resolved_settings = settings or get_settings()
     resolved_settings.validate_model_gateway()
@@ -158,6 +171,7 @@ def create_app(
     model_gateway = ModelGateway(resolved_settings, repository, model_transport)
     workflow = AnswerWorkflow(repository, model_gateway)
     account_store = AccountStore(database, resolved_settings.account_session_hours)
+    email_sender = account_email_sender or build_account_email_sender(resolved_settings)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -206,6 +220,7 @@ def create_app(
     app.state.settings = resolved_settings
     app.state.repository = repository
     app.state.account_store = account_store
+    app.state.account_email_sender = email_sender
     app.state.model_gateway = model_gateway
 
     def current_settings() -> Settings:
@@ -225,8 +240,15 @@ def create_app(
             "/developer-signature.png",
             "/access",
             "/signin",
+            "/forgot-password",
+            "/reset-password",
+            "/verify-email",
             "/v1/auth/register",
             "/v1/auth/login",
+            "/v1/auth/verify-email",
+            "/v1/auth/verification/resend",
+            "/v1/auth/password-reset/request",
+            "/v1/auth/password-reset/complete",
             "/about",
             "/v1/payments/webhook",
         }
@@ -375,19 +397,115 @@ def create_app(
             return RedirectResponse("/access" if resolved_settings.pilot_access_code else "/")
         if resolve_account_session(request, resolved_settings):
             return RedirectResponse("/", status_code=307)
-        return HTMLResponse(account_page(resolved_settings.account_registration_enabled))
+        return HTMLResponse(
+            account_page(
+                resolved_settings.account_registration_enabled,
+                resolved_settings.account_email_verification_required,
+                resolved_settings.account_password_reset_enabled,
+            )
+        )
+
+    @app.get(
+        "/forgot-password",
+        response_class=HTMLResponse,
+        response_model=None,
+        include_in_schema=False,
+    )
+    def forgot_password_page() -> HTMLResponse | RedirectResponse:
+        if not (
+            resolved_settings.accounts_enabled
+            and resolved_settings.account_password_reset_enabled
+        ):
+            return RedirectResponse("/signin", status_code=307)
+        return HTMLResponse(account_recovery_page("forgot"))
+
+    @app.get(
+        "/reset-password",
+        response_class=HTMLResponse,
+        response_model=None,
+        include_in_schema=False,
+    )
+    def reset_password_page(token: str = "") -> HTMLResponse | RedirectResponse:
+        if not (
+            resolved_settings.accounts_enabled
+            and resolved_settings.account_password_reset_enabled
+        ):
+            return RedirectResponse("/signin", status_code=307)
+        return HTMLResponse(account_recovery_page("reset", token[:200]))
+
+    @app.get(
+        "/verify-email",
+        response_class=HTMLResponse,
+        response_model=None,
+        include_in_schema=False,
+    )
+    def verify_email_page(token: str = "") -> HTMLResponse | RedirectResponse:
+        if not (
+            resolved_settings.accounts_enabled
+            and resolved_settings.account_email_verification_required
+        ):
+            return RedirectResponse("/signin", status_code=307)
+        return HTMLResponse(account_recovery_page("verify", token[:200]))
+
+    def account_action_url(path: str, token: str) -> str:
+        base_url = (resolved_settings.public_base_url or "http://localhost:8000").rstrip("/")
+        return f"{base_url}{path}?token={quote(token, safe='')}"
+
+    def deliver_account_email(purpose: str, action: AccountEmailAction) -> None:
+        try:
+            if purpose == "verify_email":
+                email_sender.send_verification(
+                    action.email,
+                    action.display_name,
+                    account_action_url("/verify-email", action.token),
+                )
+            else:
+                email_sender.send_password_reset(
+                    action.email,
+                    action.display_name,
+                    account_action_url("/reset-password", action.token),
+                )
+        except Exception as exc:
+            logger.warning(
+                "account_email_delivery_failed purpose=%s type=%s",
+                purpose,
+                type(exc).__name__,
+            )
 
     @app.post(
         "/v1/auth/register",
-        response_model=AccountOut,
+        response_model=AccountOut | AccountActionOut,
         status_code=201,
         dependencies=[Depends(enforce_rate_limit)],
     )
-    def register_account(payload: AccountRegistrationRequest, response: Response) -> AccountOut:
+    def register_account(
+        payload: AccountRegistrationRequest, response: Response
+    ) -> AccountOut | AccountActionOut:
         if not resolved_settings.accounts_enabled:
             raise HTTPException(status_code=404, detail="Account access is not configured")
         if not resolved_settings.account_registration_enabled:
             raise HTTPException(status_code=403, detail="Account registration is invite-only")
+        if resolved_settings.account_email_verification_required:
+            try:
+                action = account_store.register_pending(
+                    payload.email,
+                    payload.display_name,
+                    payload.password.get_secret_value(),
+                    resolved_settings.account_verification_token_hours,
+                )
+            except AccountExistsError:
+                action = account_store.issue_verification(
+                    payload.email, resolved_settings.account_verification_token_hours
+                )
+            if action:
+                deliver_account_email("verify_email", action)
+            response.status_code = 202
+            return AccountActionOut(
+                message=(
+                    "If this address can be registered, a verification link will arrive shortly."
+                ),
+                action_required="verify_email",
+            )
         try:
             session = account_store.register(
                 payload.email,
@@ -405,6 +523,102 @@ def create_app(
             {"workspace_created": True},
         )
         return session.public()
+
+    @app.post(
+        "/v1/auth/verification/resend",
+        response_model=AccountActionOut,
+        status_code=202,
+        dependencies=[Depends(enforce_rate_limit)],
+    )
+    def resend_verification(payload: AccountEmailRequest) -> AccountActionOut:
+        if not (
+            resolved_settings.accounts_enabled
+            and resolved_settings.account_email_verification_required
+        ):
+            raise HTTPException(status_code=404, detail="Email verification is not configured")
+        action = account_store.issue_verification(
+            payload.email, resolved_settings.account_verification_token_hours
+        )
+        if action:
+            deliver_account_email("verify_email", action)
+        return AccountActionOut(
+            message="If this account is awaiting verification, a new link will arrive shortly.",
+            action_required="verify_email",
+        )
+
+    @app.post(
+        "/v1/auth/verify-email",
+        response_model=AccountOut,
+        dependencies=[Depends(enforce_rate_limit)],
+    )
+    def verify_email(payload: AccountTokenRequest, response: Response) -> AccountOut:
+        if not (
+            resolved_settings.accounts_enabled
+            and resolved_settings.account_email_verification_required
+        ):
+            raise HTTPException(status_code=404, detail="Email verification is not configured")
+        session = account_store.verify_email(payload.token.get_secret_value())
+        if not session:
+            raise HTTPException(status_code=400, detail="Verification link is invalid or expired")
+        set_account_cookie(response, session.token)
+        repository.audit(
+            session.principal,
+            "account_email_verified",
+            "user",
+            session.user_id,
+        )
+        return session.public()
+
+    @app.post(
+        "/v1/auth/password-reset/request",
+        response_model=AccountActionOut,
+        status_code=202,
+        dependencies=[Depends(enforce_rate_limit)],
+    )
+    def request_password_reset(payload: AccountEmailRequest) -> AccountActionOut:
+        if not (
+            resolved_settings.accounts_enabled
+            and resolved_settings.account_password_reset_enabled
+        ):
+            raise HTTPException(status_code=404, detail="Password recovery is not configured")
+        action = account_store.issue_password_reset(
+            payload.email, resolved_settings.account_password_reset_token_minutes
+        )
+        if action:
+            deliver_account_email("reset_password", action)
+        return AccountActionOut(
+            message="If an active account exists for this address, a reset link will arrive shortly."
+        )
+
+    @app.post(
+        "/v1/auth/password-reset/complete",
+        response_model=AccountActionOut,
+        dependencies=[Depends(enforce_rate_limit)],
+    )
+    def complete_password_reset(
+        payload: AccountPasswordResetRequest, response: Response
+    ) -> AccountActionOut:
+        if not (
+            resolved_settings.accounts_enabled
+            and resolved_settings.account_password_reset_enabled
+        ):
+            raise HTTPException(status_code=404, detail="Password recovery is not configured")
+        reset = account_store.reset_password(
+            payload.token.get_secret_value(), payload.password.get_secret_value()
+        )
+        if not reset:
+            raise HTTPException(status_code=400, detail="Reset link is invalid or expired")
+        response.delete_cookie(
+            ACCOUNT_COOKIE,
+            httponly=True,
+            secure=resolved_settings.env == "production",
+            samesite="lax",
+            path="/",
+        )
+        return AccountActionOut(
+            message="Password updated. Sign in with your new password.",
+            action_required="sign_in",
+        )
 
     @app.post(
         "/v1/auth/login",

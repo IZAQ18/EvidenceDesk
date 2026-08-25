@@ -19,6 +19,14 @@ services:
         value: "true"
       - key: EVIDENCEDESK_MODEL_GATEWAY_ENABLED
         value: "false"
+      - key: EVIDENCEDESK_ACCOUNTS_ENABLED
+        value: "false"
+      - key: EVIDENCEDESK_ACCOUNT_REGISTRATION_ENABLED
+        value: "false"
+      - key: EVIDENCEDESK_ACCOUNT_EMAIL_VERIFICATION_REQUIRED
+        value: "false"
+      - key: EVIDENCEDESK_ACCOUNT_PASSWORD_RESET_ENABLED
+        value: "false"
       - key: EVIDENCEDESK_DB_PATH
         value: /tmp/evidencedesk/evidencedesk.db
       - key: EVIDENCEDESK_DOCUMENT_STORE_PATH

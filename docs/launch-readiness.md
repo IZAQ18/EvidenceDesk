@@ -13,7 +13,7 @@ the organization has not supplied enough information.
 
 | Gate | Measurable definition | Current state |
 | --- | --- | --- |
-| Account safety | Individual sign-in, revocable sessions, CSRF protection, tenant isolation | Foundation implemented; email verification and recovery pending |
+| Account safety | Individual sign-in, verified email, recovery, revocable sessions, CSRF protection, tenant isolation | Verification/recovery lifecycle implemented and tested; real SMTP/domain acceptance, invitations, and deletion/export pending |
 | Durable data | Managed PostgreSQL, private object storage, backups, restore exercise | Adapters, bounded pooling, readiness checks, guarded copy tool, and unapplied AWS data-plane template implemented; PostgreSQL 16 path tested in CI. Managed-resource acceptance and restore exercise pending |
 | Ingestion | Async processing, malware scan, progress, resilient OCR and table handling | Durable jobs, visible progress, bounded retry, integrity verification, and lease recovery implemented; isolated workers, malware scanning, and advanced table extraction pending |
 | Answer quality | Organization-specific gold set, >=95% retrieval success, >=98% valid citations | Hybrid local semantic retrieval, reranking, diagnostics, and an 8-case synthetic regression benchmark implemented; customer-specific held-out evaluation pending |
@@ -30,7 +30,7 @@ the organization has not supplied enough information.
 2. PostgreSQL, object storage, migrations, and background jobs.
 3. Semantic retrieval, reranking, grounded model synthesis, and expanded evaluation.
 4. Server-managed model usage, quotas, and cost controls.
-5. Email verification, recovery, invitations, deletion, and organization controls.
+5. Email-provider/domain acceptance, invitations, deletion, and organization controls.
 6. Lemon Squeezy subscriptions and server-side entitlements.
 7. Policy Audit: contradictions, missing dates, version differences, and evidence gaps.
 8. Monitoring, backups, legal pages, accessibility, performance, and private acceptance.
@@ -127,3 +127,21 @@ The durable-data deployment seam now provides:
 
 No AWS resources were created by this milestone. Public registration remains disabled until a
 managed target is created, migration and restore acceptance pass, and account recovery is ready.
+
+## Milestone 6 evidence
+
+The opt-in account lifecycle now provides:
+
+- pending accounts that cannot authenticate before email verification;
+- purpose-bound verification and reset tokens stored only as SHA-256 hashes;
+- short expiries, rotation on resend, one-time consumption, and replay rejection;
+- generic request responses that do not directly reveal whether an email is registered;
+- a provider-neutral SMTP boundary that requires STARTTLS in production and never logs message
+  bodies, recipients, passwords, or tokens;
+- password changes that revoke every database session and clear the browser cookie; and
+- accessible verification, forgotten-password, and reset screens that keep GET requests
+  read-only so automated mail-link scanners cannot consume tokens.
+
+The Render pilot explicitly keeps accounts, registration, verification, and reset disabled. Public
+registration still requires managed-data acceptance, an authenticated sender domain, delivery and
+abuse monitoring, privacy/retention review, invitations, and deletion/export controls.

@@ -28,7 +28,8 @@ This is an intentionally honest portfolio MVP. It runs locally and demonstrates 
 - Tenant and classification filtering before retrieval; role checks for administration; ownership checks for conversation data.
 - API-key authentication for local use plus an optional standards-based OIDC/JWT validation adapter.
 - An opt-in account foundation with scrypt password hashing, database-backed revocable sessions,
-  HttpOnly cookies, CSRF protection, and a separate private workspace for every registered user.
+  HttpOnly cookies, CSRF protection, one-time hashed email-verification/password-reset tokens,
+  SMTP delivery boundaries, and a separate private workspace for every registered user.
 - A replaceable original-storage boundary with backward-compatible local files and an optional
   private S3 backend using tenant-scoped object keys, authenticated streaming, server-side
   encryption, KMS support, and expected-bucket-owner protection.
@@ -130,12 +131,33 @@ EVIDENCEDESK_ACCOUNT_REGISTRATION_ENABLED=true
 EVIDENCEDESK_ACCOUNT_SESSION_HOURS=168
 ```
 
-Each registration creates a user, a private workspace, an administrator membership, and a
-revocable server-side session. Existing tenant filters then isolate documents, retrieval,
-conversations, reports, feedback, and metrics by workspace. This is the first production
-transformation milestone, not a claim that public account service is finished: email
-verification, password reset, managed PostgreSQL, invitations, and account deletion remain
-launch gates. See [launch readiness](docs/launch-readiness.md).
+Each registration creates a user, private workspace, and administrator membership. With email
+verification disabled, it also creates a revocable session immediately; verified mode keeps the
+account pending until its one-time link is confirmed. Existing tenant filters isolate documents,
+retrieval, conversations, reports, feedback, and metrics by workspace. This is a production-minded
+boundary, not a claim that public account service is finished.
+
+Verified signup and recovery are separately opt-in. Production fails closed unless SMTP uses
+STARTTLS and an HTTPS public URL is configured:
+
+```dotenv
+EVIDENCEDESK_ACCOUNT_EMAIL_VERIFICATION_REQUIRED=true
+EVIDENCEDESK_ACCOUNT_PASSWORD_RESET_ENABLED=true
+EVIDENCEDESK_EMAIL_DELIVERY_BACKEND=smtp
+EVIDENCEDESK_SMTP_HOST=smtp.example.com
+EVIDENCEDESK_SMTP_PORT=587
+EVIDENCEDESK_SMTP_USERNAME=server-only-user
+EVIDENCEDESK_SMTP_PASSWORD=server-only-secret
+EVIDENCEDESK_SMTP_FROM_ADDRESS=EvidenceDesk <accounts@example.com>
+EVIDENCEDESK_SMTP_STARTTLS=true
+EVIDENCEDESK_PUBLIC_BASE_URL=https://app.example.com
+```
+
+Tokens are random, stored only as SHA-256 hashes, expire, rotate when reissued, and can be used
+once. Resetting a password revokes every existing session. Unknown-account requests receive the
+same response as known accounts. Real sender-domain authentication, delivery monitoring, abuse
+controls, and provider acceptance remain deployment gates; see the
+[account email runbook](docs/account-email.md) and [launch readiness](docs/launch-readiness.md).
 
 ### Configure durable originals
 
@@ -325,4 +347,6 @@ and reports, feedback and metrics, tenant/classification isolation, conversation
 authorization, traversal protection, OIDC claim mapping, upload validation, refusal,
 prompt-injection handling, invalid model citations/claims, provider timeout, quota exhaustion,
 key non-disclosure, usage-metadata privacy, migration integrity preflight, readiness checks, and
-private/recoverable AWS template defaults.
+private/recoverable AWS template defaults. Account tests cover pending verification, token hashing,
+expiry, resend rotation, replay rejection, generic recovery responses, SMTP STARTTLS, password
+replacement, and full session revocation on both SQLite and PostgreSQL paths.
