@@ -13,13 +13,13 @@ the organization has not supplied enough information.
 
 | Gate | Measurable definition | Current state |
 | --- | --- | --- |
-| Account safety | Individual sign-in, verified email, recovery, revocable sessions, CSRF protection, tenant isolation | Verification/recovery lifecycle implemented and tested; real SMTP/domain acceptance, invitations, and deletion/export pending |
+| Account safety | Individual sign-in, verified email, recovery, revocable sessions, CSRF protection, tenant isolation | Verification/recovery, scoped invitations, and workspace switching implemented and tested; real SMTP/domain and managed-data acceptance pending |
 | Durable data | Managed PostgreSQL, private object storage, backups, restore exercise | Adapters, bounded pooling, readiness checks, guarded copy tool, and unapplied AWS data-plane template implemented; PostgreSQL 16 path tested in CI. Managed-resource acceptance and restore exercise pending |
 | Ingestion | Async processing, malware scan, progress, resilient OCR and table handling | Durable jobs, visible progress, bounded retry, integrity verification, and lease recovery implemented; isolated workers, malware scanning, and advanced table extraction pending |
 | Answer quality | Organization-specific gold set, >=95% retrieval success, >=98% valid citations | Hybrid local semantic retrieval, reranking, diagnostics, and an 8-case synthetic regression benchmark implemented; customer-specific held-out evaluation pending |
 | Customer AI | Server-managed provider, quotas, cost controls, no customer key required | Gateway, fallbacks, usage controls, and fake-provider tests implemented; provider/privacy acceptance and live configuration pending |
 | Billing | Hosted checkout, verified webhooks, entitlements, portal, cancellation, refunds | Verified event intake exists; entitlements pending |
-| User control | Export, document deletion, conversation deletion, complete account deletion | Partial; account deletion pending |
+| User control | Export, document deletion, conversation deletion, complete account deletion | Bounded workspace export and guarded account deletion implemented; shared-workspace ownership transfer and operational cleanup/retention acceptance pending |
 | Trust | Terms, privacy, retention, subprocessors, support and honest limitations | Pilot notices exist; commercial documents pending |
 | Operations | Monitoring, error tracking, alerts, backups, incident procedure | Pending |
 | Experience | First cited answer within two minutes; desktop/mobile/accessibility acceptance | Account journey validated locally; broader acceptance pending |
@@ -142,6 +142,26 @@ The opt-in account lifecycle now provides:
 - accessible verification, forgotten-password, and reset screens that keep GET requests
   read-only so automated mail-link scanners cannot consume tokens.
 
-The Render pilot explicitly keeps accounts, registration, verification, and reset disabled. Public
-registration still requires managed-data acceptance, an authenticated sender domain, delivery and
-abuse monitoring, privacy/retention review, invitations, and deletion/export controls.
+The Render pilot explicitly keeps accounts, registration, verification, reset, invitations,
+export, and deletion disabled. Public registration still requires managed-data acceptance, an
+authenticated sender domain, delivery and abuse monitoring, privacy/retention review, and
+operational acceptance of the implemented controls.
+
+## Milestone 7 evidence
+
+The opt-in workspace and privacy controls now provide:
+
+- administrator invitations with bounded roles and classification clearances;
+- expiring, rotating, one-time invitation links stored only as SHA-256 hashes;
+- existing-account and invitation-created-account acceptance paths with email matching and CSRF;
+- session-rotating workspace switching across verified memberships;
+- administrator-only, size-bounded ZIP exports that omit credentials, token hashes, and storage
+  paths while including available originals;
+- password plus explicit-word account deletion, with refusal when an owned workspace has other
+  members; and
+- database-first removal followed by best-effort original cleanup that logs no object names.
+
+SQLite acceptance tests cover invitations, replay, CSRF, switching, export content, secret
+exclusion, deletion, storage cleanup, and disabled-feature behavior. The PostgreSQL CI path covers
+the invitation/membership schema and flow. This does not claim managed SMTP, S3 cleanup, backup
+expiry, legal/privacy, or shared-workspace ownership-transfer acceptance.

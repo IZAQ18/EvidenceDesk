@@ -13,6 +13,8 @@ class AccountEmailSender(Protocol):
 
     def send_password_reset(self, recipient: str, display_name: str, url: str) -> None: ...
 
+    def send_invitation(self, recipient: str, workspace_name: str, url: str) -> None: ...
+
 
 class DisabledEmailSender:
     def send_verification(self, recipient: str, display_name: str, url: str) -> None:
@@ -21,6 +23,10 @@ class DisabledEmailSender:
 
     def send_password_reset(self, recipient: str, display_name: str, url: str) -> None:
         del recipient, display_name, url
+        raise RuntimeError("Account email delivery is disabled")
+
+    def send_invitation(self, recipient: str, workspace_name: str, url: str) -> None:
+        del recipient, workspace_name, url
         raise RuntimeError("Account email delivery is disabled")
 
 
@@ -77,6 +83,18 @@ class SMTPEmailSender:
                 "Use this one-time link to choose a new EvidenceDesk password:\n"
                 f"{url}\n\n"
                 "If you did not request a reset, you can ignore this message."
+            ),
+        )
+
+    def send_invitation(self, recipient: str, workspace_name: str, url: str) -> None:
+        self._send(
+            recipient,
+            f"You are invited to {workspace_name} on EvidenceDesk",
+            (
+                f"You have been invited to the {workspace_name} EvidenceDesk workspace.\n\n"
+                "Use this one-time link to accept the invitation:\n"
+                f"{url}\n\n"
+                "If you were not expecting this invitation, you can ignore this message."
             ),
         )
 

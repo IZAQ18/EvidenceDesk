@@ -29,7 +29,8 @@ This is an intentionally honest portfolio MVP. It runs locally and demonstrates 
 - API-key authentication for local use plus an optional standards-based OIDC/JWT validation adapter.
 - An opt-in account foundation with scrypt password hashing, database-backed revocable sessions,
   HttpOnly cookies, CSRF protection, one-time hashed email-verification/password-reset tokens,
-  SMTP delivery boundaries, and a separate private workspace for every registered user.
+  SMTP delivery boundaries, scoped one-time workspace invitations and switching, bounded private
+  exports, guarded deletion, and a separate private workspace for every registered user.
 - A replaceable original-storage boundary with backward-compatible local files and an optional
   private S3 backend using tenant-scoped object keys, authenticated streaming, server-side
   encryption, KMS support, and expected-bucket-owner protection.
@@ -129,6 +130,9 @@ browser:
 EVIDENCEDESK_ACCOUNTS_ENABLED=true
 EVIDENCEDESK_ACCOUNT_REGISTRATION_ENABLED=true
 EVIDENCEDESK_ACCOUNT_SESSION_HOURS=168
+EVIDENCEDESK_ACCOUNT_INVITATIONS_ENABLED=true
+EVIDENCEDESK_ACCOUNT_EXPORT_ENABLED=true
+EVIDENCEDESK_ACCOUNT_DELETION_ENABLED=true
 ```
 
 Each registration creates a user, private workspace, and administrator membership. With email
@@ -157,7 +161,8 @@ Tokens are random, stored only as SHA-256 hashes, expire, rotate when reissued, 
 once. Resetting a password revokes every existing session. Unknown-account requests receive the
 same response as known accounts. Real sender-domain authentication, delivery monitoring, abuse
 controls, and provider acceptance remain deployment gates; see the
-[account email runbook](docs/account-email.md) and [launch readiness](docs/launch-readiness.md).
+[account email runbook](docs/account-email.md), [account controls](docs/account-controls.md), and
+[launch readiness](docs/launch-readiness.md).
 
 ### Configure durable originals
 

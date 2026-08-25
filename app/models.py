@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, SecretStr, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
 from app.config import Classification
 
@@ -88,6 +88,62 @@ class AccountTokenRequest(BaseModel):
 
 class AccountPasswordResetRequest(AccountTokenRequest):
     password: SecretStr = Field(min_length=12, max_length=128)
+
+
+class WorkspaceInvitationRequest(AccountEmailRequest):
+    role: Literal["reader", "editor", "admin"] = "reader"
+    clearances: list[Classification] = Field(default_factory=lambda: ["public", "internal"])
+
+    @field_validator("clearances")
+    @classmethod
+    def unique_clearances(cls, value: list[Classification]) -> list[Classification]:
+        if not value:
+            raise ValueError("Choose at least one classification clearance")
+        return list(dict.fromkeys(value))
+
+
+class WorkspaceInvitationAcceptRequest(AccountTokenRequest):
+    display_name: str | None = Field(default=None, min_length=2, max_length=80)
+    password: SecretStr | None = Field(default=None, min_length=12, max_length=128)
+
+    @model_validator(mode="after")
+    def complete_new_account_fields(self) -> WorkspaceInvitationAcceptRequest:
+        if (self.display_name is None) != (self.password is None):
+            raise ValueError("Display name and password must be provided together")
+        if self.display_name is not None:
+            self.display_name = AccountRegistrationRequest.clean_display_name(self.display_name)
+        return self
+
+
+class WorkspaceOut(BaseModel):
+    id: str
+    name: str
+    plan: str
+    role: Literal["reader", "editor", "admin"]
+    clearances: list[Classification]
+    created_by: str
+    member_count: int
+
+
+class WorkspaceInvitationOut(BaseModel):
+    id: str
+    email: str
+    role: Literal["reader", "editor", "admin"]
+    clearances: list[Classification]
+    status: Literal["pending", "accepted", "revoked", "expired"]
+    expires_at: datetime
+
+
+class AccountDeleteRequest(BaseModel):
+    password: SecretStr = Field(min_length=1, max_length=128)
+    confirmation: str = Field(min_length=6, max_length=20)
+
+    @field_validator("confirmation")
+    @classmethod
+    def validate_confirmation(cls, value: str) -> str:
+        if value.strip() != "DELETE":
+            raise ValueError("Type DELETE to confirm")
+        return "DELETE"
 
 
 class DocumentOut(BaseModel):

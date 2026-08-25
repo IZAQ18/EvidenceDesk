@@ -1,2 +1,1 @@
 """EvidenceDesk application package."""
-

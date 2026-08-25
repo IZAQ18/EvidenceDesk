@@ -68,6 +68,16 @@ def test_smtp_sender_uses_starttls_authentication_and_plain_text(monkeypatch):
     assert client.message.get_content_type() == "text/plain"
     assert "one-time-token" in client.message.get_content()
 
+    sender.send_invitation(
+        "member@example.test",
+        "Synthetic Team",
+        "https://accounts.example.test/invitation?token=invite-once",
+    )
+    invitation = FakeSMTP.instance.message
+    assert invitation["To"] == "member@example.test"
+    assert "Synthetic Team" in invitation["Subject"]
+    assert "invite-once" in invitation.get_content()
+
 
 def test_disabled_sender_fails_without_exposing_message_data():
     sender = DisabledEmailSender()

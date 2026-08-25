@@ -18,7 +18,9 @@ from app.repository import Repository
 from app.storage import LocalDocumentStorage
 
 POSTGRES_URL = os.getenv("EVIDENCEDESK_TEST_POSTGRES_URL")
-pytestmark = pytest.mark.skipif(not POSTGRES_URL, reason="PostgreSQL integration URL not configured")
+pytestmark = pytest.mark.skipif(
+    not POSTGRES_URL, reason="PostgreSQL integration URL not configured"
+)
 
 
 class MemoryS3Storage:
@@ -51,6 +53,7 @@ class CapturingAccountEmail:
     def __init__(self):
         self.verification_urls: list[str] = []
         self.reset_urls: list[str] = []
+        self.invitation_urls: list[str] = []
 
     def send_verification(self, recipient: str, display_name: str, url: str) -> None:
         del recipient, display_name
@@ -59,6 +62,10 @@ class CapturingAccountEmail:
     def send_password_reset(self, recipient: str, display_name: str, url: str) -> None:
         del recipient, display_name
         self.reset_urls.append(url)
+
+    def send_invitation(self, recipient: str, workspace_name: str, url: str) -> None:
+        del recipient, workspace_name
+        self.invitation_urls.append(url)
 
 
 def _link_token(url: str) -> str:
@@ -95,7 +102,8 @@ def test_postgres_accounts_ingestion_retrieval_and_tenant_isolation(tmp_path):
         with database.connect() as connection:
             connection.execute(
                 """TRUNCATE model_usage_events, model_usage_daily,
-                          account_tokens, auth_sessions, workspace_members, workspaces, users,
+                          workspace_invitations, account_tokens, auth_sessions,
+                          workspace_members, workspaces, users,
                           payment_events, audit_events, feedback, answer_diagnostics,
                           messages, conversations,
                           ingestion_jobs, document_pages, chunks, documents
@@ -104,7 +112,7 @@ def test_postgres_accounts_ingestion_retrieval_and_tenant_isolation(tmp_path):
             versions = connection.execute(
                 "SELECT version FROM schema_migrations ORDER BY version"
             ).fetchall()
-        assert [row["version"] for row in versions] == [1, 2, 3, 4, 5]
+        assert [row["version"] for row in versions] == [1, 2, 3, 4, 5, 6]
 
         first = _register(client, "FIRST@example.com", "First Team")
         uploaded = client.post(
@@ -129,8 +137,7 @@ def test_postgres_accounts_ingestion_retrieval_and_tenant_isolation(tmp_path):
             time.sleep(0.05)
         assert job["status"] == "ready", job
         document = next(
-            item for item in client.get("/v1/documents").json()
-            if item["id"] == job["document_id"]
+            item for item in client.get("/v1/documents").json() if item["id"] == job["document_id"]
         )
         assert document["has_original"] is True
 
@@ -198,7 +205,8 @@ def test_sqlite_and_local_originals_migrate_to_postgres_and_s3(tmp_path, monkeyp
     with target.connect() as connection:
         connection.execute(
             """TRUNCATE model_usage_events, model_usage_daily,
-                      account_tokens, auth_sessions, workspace_members, workspaces, users,
+                      workspace_invitations, account_tokens, auth_sessions,
+                      workspace_members, workspaces, users,
                       payment_events, audit_events, feedback, answer_diagnostics,
                       messages, conversations, ingestion_jobs, document_pages,
                       chunks, documents RESTART IDENTITY CASCADE"""
@@ -288,7 +296,8 @@ def test_postgres_email_verification_and_password_recovery(tmp_path):
         with database.connect() as connection:
             connection.execute(
                 """TRUNCATE model_usage_events, model_usage_daily,
-                          account_tokens, auth_sessions, workspace_members, workspaces, users,
+                          workspace_invitations, account_tokens, auth_sessions,
+                          workspace_members, workspaces, users,
                           payment_events, audit_events, feedback, answer_diagnostics,
                           messages, conversations, ingestion_jobs, document_pages,
                           chunks, documents RESTART IDENTITY CASCADE"""
@@ -304,9 +313,7 @@ def test_postgres_email_verification_and_password_recovery(tmp_path):
         )
         assert registered.status_code == 202
         verification_token = _link_token(sender.verification_urls[-1])
-        verified = client.post(
-            "/v1/auth/verify-email", json={"token": verification_token}
-        )
+        verified = client.post("/v1/auth/verify-email", json={"token": verification_token})
         assert verified.status_code == 200
 
         requested = client.post(
@@ -329,3 +336,60 @@ def test_postgres_email_verification_and_password_recovery(tmp_path):
             },
         )
         assert login.status_code == 200
+
+
+def test_postgres_workspace_invitation_and_membership_switch(tmp_path):
+    settings = Settings(
+        _env_file=None,
+        env="test",
+        database_backend="postgres",
+        database_url=POSTGRES_URL,
+        document_store_path=tmp_path / "account-controls-originals",
+        accounts_enabled=True,
+        account_registration_enabled=True,
+        account_invitations_enabled=True,
+        public_base_url="https://accounts.example.test",
+        ingestion_worker_enabled=False,
+        rate_limit_per_minute=10_000,
+    )
+    sender = CapturingAccountEmail()
+    app = create_app(settings, account_email_sender=sender)
+    with TestClient(app, base_url="https://testserver") as client:
+        database = app.state.repository.database
+        with database.connect() as connection:
+            connection.execute(
+                """TRUNCATE model_usage_events, model_usage_daily,
+                          workspace_invitations, account_tokens, auth_sessions,
+                          workspace_members, workspaces, users,
+                          payment_events, audit_events, feedback, answer_diagnostics,
+                          messages, conversations, ingestion_jobs, document_pages,
+                          chunks, documents RESTART IDENTITY CASCADE"""
+            )
+
+        owner = _register(client, "postgres-owner@example.com", "Postgres Owner")
+        invited = client.post(
+            "/v1/account/invitations",
+            headers={"X-CSRF-Token": owner["csrf_token"]},
+            json={
+                "email": "postgres-member@example.com",
+                "role": "reader",
+                "clearances": ["public", "internal"],
+            },
+        )
+        assert invited.status_code == 201, invited.text
+        invitation_token = _link_token(sender.invitation_urls[-1])
+        client.cookies.clear()
+        accepted = client.post(
+            "/v1/auth/invitations/accept",
+            json={
+                "token": invitation_token,
+                "display_name": "Postgres Member",
+                "password": "postgres-member-correct-password",
+            },
+        )
+        assert accepted.status_code == 200, accepted.text
+        assert accepted.json()["workspace_id"] == owner["workspace_id"]
+        assert accepted.json()["role"] == "reader"
+        memberships = client.get("/v1/account/workspaces")
+        assert memberships.status_code == 200
+        assert memberships.json()[0]["member_count"] == 2

@@ -20,6 +20,7 @@ TABLE_ORDER = (
     "workspace_members",
     "auth_sessions",
     "account_tokens",
+    "workspace_invitations",
     "documents",
     "chunks",
     "document_pages",
@@ -85,7 +86,9 @@ def _ensure_quiescent(connection: sqlite3.Connection, tables: set[str]) -> None:
 def _migration_id(value: str | None) -> str:
     candidate = value or datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     if not re.fullmatch(r"[A-Za-z0-9_-]{6,64}", candidate):
-        raise RuntimeError("Migration id must contain 6-64 letters, numbers, dashes, or underscores")
+        raise RuntimeError(
+            "Migration id must contain 6-64 letters, numbers, dashes, or underscores"
+        )
     return candidate
 
 
@@ -184,9 +187,7 @@ def _ensure_empty_target(connection: Any) -> None:
         if connection.execute(f'SELECT COUNT(*) count FROM "{table}"').fetchone()["count"]:
             occupied.append(table)
     if occupied:
-        raise RuntimeError(
-            "Target PostgreSQL database is not empty: " + ", ".join(occupied)
-        )
+        raise RuntimeError("Target PostgreSQL database is not empty: " + ", ".join(occupied))
 
 
 def _copy_database(
@@ -205,8 +206,7 @@ def _copy_database(
             rows = _rows(source, table)
             target_columns = _target_columns(connection, table)
             source_columns = [
-                row["name"]
-                for row in source.execute(f'PRAGMA table_info("{table}")').fetchall()
+                row["name"] for row in source.execute(f'PRAGMA table_info("{table}")').fetchall()
             ]
             columns = [column for column in source_columns if column in target_columns]
             if any(not SAFE_IDENTIFIER.fullmatch(column) for column in columns):
@@ -231,9 +231,7 @@ def _copy_database(
                 )"""
             )
         for table, expected in copied_counts.items():
-            actual = connection.execute(
-                f'SELECT COUNT(*) count FROM "{table}"'
-            ).fetchone()["count"]
+            actual = connection.execute(f'SELECT COUNT(*) count FROM "{table}"').fetchone()["count"]
             if actual != expected:
                 raise RuntimeError(
                     f"Row-count verification failed for {table}: {actual} != {expected}"
@@ -262,9 +260,7 @@ def migrate(
         _ensure_quiescent(source, tables)
         summary = _source_summary(source)
         storage_records = _storage_records(source, tables)
-        original_count, original_bytes = _verify_local_originals(
-            storage_records, source_storage
-        )
+        original_count, original_bytes = _verify_local_originals(storage_records, source_storage)
         result: dict[str, Any] = {
             "mode": "execute" if execute else "dry-run",
             "source_rows": summary,

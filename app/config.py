@@ -31,8 +31,13 @@ class Settings(BaseSettings):
     account_session_hours: int = Field(default=24 * 7, ge=1, le=24 * 30)
     account_email_verification_required: bool = False
     account_password_reset_enabled: bool = False
+    account_invitations_enabled: bool = False
+    account_export_enabled: bool = False
+    account_deletion_enabled: bool = False
     account_verification_token_hours: int = Field(default=24, ge=1, le=168)
     account_password_reset_token_minutes: int = Field(default=30, ge=10, le=120)
+    account_invitation_hours: int = Field(default=72, ge=1, le=336)
+    account_export_max_bytes: int = Field(default=250_000_000, ge=1_000_000, le=1_000_000_000)
     email_delivery_backend: Literal["disabled", "smtp"] = "disabled"
     smtp_host: str | None = None
     smtp_port: int = Field(default=587, ge=1, le=65535)
@@ -173,8 +178,14 @@ class Settings(BaseSettings):
             )
         if self.account_registration_enabled and not self.accounts_enabled:
             raise RuntimeError("Account registration requires EVIDENCEDESK_ACCOUNTS_ENABLED=true")
+        if (
+            self.account_export_enabled or self.account_deletion_enabled
+        ) and not self.accounts_enabled:
+            raise RuntimeError("Account controls require EVIDENCEDESK_ACCOUNTS_ENABLED=true")
         account_email_features = (
-            self.account_email_verification_required or self.account_password_reset_enabled
+            self.account_email_verification_required
+            or self.account_password_reset_enabled
+            or self.account_invitations_enabled
         )
         if account_email_features and not self.accounts_enabled:
             raise RuntimeError("Account email features require EVIDENCEDESK_ACCOUNTS_ENABLED=true")
@@ -199,9 +210,7 @@ class Settings(BaseSettings):
             if not self.smtp_starttls:
                 raise RuntimeError("Production SMTP delivery must use STARTTLS")
         smtp_username = (self.smtp_username or "").strip()
-        smtp_password = (
-            self.smtp_password.get_secret_value().strip() if self.smtp_password else ""
-        )
+        smtp_password = self.smtp_password.get_secret_value().strip() if self.smtp_password else ""
         if bool(smtp_username) != bool(smtp_password):
             raise RuntimeError("SMTP username and password must be configured together")
         if self.auth_mode in {"oidc", "hybrid"}:

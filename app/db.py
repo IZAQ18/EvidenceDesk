@@ -180,6 +180,22 @@ CREATE TABLE IF NOT EXISTS account_tokens (
 CREATE INDEX IF NOT EXISTS idx_account_tokens_user
     ON account_tokens(user_id, purpose, expires_at);
 
+CREATE TABLE IF NOT EXISTS workspace_invitations (
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    email TEXT NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('reader','editor','admin')),
+    clearances_json TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    invited_by TEXT NOT NULL REFERENCES users(id),
+    status TEXT NOT NULL CHECK (status IN ('pending','accepted','revoked')),
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    accepted_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_workspace_invitations_lookup
+    ON workspace_invitations(workspace_id, email, status, expires_at);
+
 CREATE TABLE IF NOT EXISTS ingestion_jobs (
     id TEXT PRIMARY KEY,
     document_id TEXT NOT NULL,
@@ -521,6 +537,26 @@ POSTGRES_MIGRATIONS: tuple[tuple[int, tuple[str, ...]], ...] = (
                ON account_tokens(user_id, purpose, expires_at)""",
         ),
     ),
+    (
+        6,
+        (
+            """CREATE TABLE IF NOT EXISTS workspace_invitations (
+                id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+                email TEXT NOT NULL,
+                role TEXT NOT NULL CHECK (role IN ('reader','editor','admin')),
+                clearances_json TEXT NOT NULL,
+                token_hash TEXT NOT NULL UNIQUE,
+                invited_by TEXT NOT NULL REFERENCES users(id),
+                status TEXT NOT NULL CHECK (status IN ('pending','accepted','revoked')),
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                accepted_at TEXT
+            )""",
+            """CREATE INDEX IF NOT EXISTS idx_workspace_invitations_lookup
+               ON workspace_invitations(workspace_id, email, status, expires_at)""",
+        ),
+    ),
 )
 
 
@@ -596,9 +632,7 @@ class PostgresConnection:
     def _translate(query: str) -> str:
         return query.replace("%", "%%").replace("?", "%s")
 
-    def execute(
-        self, query: str, parameters: Sequence[Any] | None = None
-    ) -> Any:
+    def execute(self, query: str, parameters: Sequence[Any] | None = None) -> Any:
         if parameters is None:
             return self.connection.execute(query)
         return self.connection.execute(self._translate(query), tuple(parameters))

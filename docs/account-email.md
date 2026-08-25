@@ -25,6 +25,7 @@ EVIDENCEDESK_ACCOUNTS_ENABLED=true
 EVIDENCEDESK_ACCOUNT_REGISTRATION_ENABLED=true
 EVIDENCEDESK_ACCOUNT_EMAIL_VERIFICATION_REQUIRED=true
 EVIDENCEDESK_ACCOUNT_PASSWORD_RESET_ENABLED=true
+EVIDENCEDESK_ACCOUNT_INVITATIONS_ENABLED=true
 EVIDENCEDESK_ACCOUNT_VERIFICATION_TOKEN_HOURS=24
 EVIDENCEDESK_ACCOUNT_PASSWORD_RESET_TOKEN_MINUTES=30
 
@@ -61,6 +62,8 @@ Before enabling registration:
 ## Current boundary
 
 Automated tests use a capturing fake sender; no real mailbox is contacted. SMTP transport itself is
-tested for STARTTLS, authentication, and plain-text message construction. Public Render account
-features remain explicitly disabled. Managed PostgreSQL, delivery acceptance, invitations,
-account deletion/export, and operational monitoring remain launch gates.
+tested for STARTTLS, authentication, and plain-text message construction. Invitation delivery uses
+the same provider-neutral boundary and one-time hashed-token design. Public Render account features
+remain explicitly disabled. Managed-data acceptance, real delivery acceptance, privacy/retention
+review, abuse monitoring, and operational alerting remain launch gates. See
+[account controls](account-controls.md) for invitation, export, and deletion behavior.

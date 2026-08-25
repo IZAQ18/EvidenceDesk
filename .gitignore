@@ -6,6 +6,7 @@ __pycache__/
 .pytest-evidencedesk-*/
 .pytest-*/
 .ruff_cache/
+.visual-acceptance/
 .coverage
 *.py[cod]
 data/

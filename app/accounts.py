@@ -114,6 +114,25 @@ class AccountEmailAction:
     display_name: str
 
 
+@dataclass(frozen=True)
+class WorkspaceInvitationAction:
+    invitation_id: str
+    token: str
+    email: str
+    workspace_name: str
+    role: str
+    clearances: list[str]
+    expires_at: datetime
+
+
+class InvitationError(ValueError):
+    pass
+
+
+class AccountDeletionBlocked(ValueError):
+    pass
+
+
 class AccountStore:
     """Small account boundary that can later be replaced by a managed identity service."""
 
@@ -139,7 +158,14 @@ class AccountStore:
                     """INSERT INTO users
                        (id, email, display_name, password_hash, status, created_at, updated_at)
                        VALUES (?, ?, ?, ?, 'active', ?, ?)""",
-                    (user_id, email, display_name, hash_password(password), now.isoformat(), now.isoformat()),
+                    (
+                        user_id,
+                        email,
+                        display_name,
+                        hash_password(password),
+                        now.isoformat(),
+                        now.isoformat(),
+                    ),
                 )
                 connection.execute(
                     """INSERT INTO workspaces (id, name, plan, created_by, created_at)
@@ -340,9 +366,7 @@ class AccountStore:
             )
         return self._from_row(row, session_token, csrf_token, session_expires)
 
-    def issue_password_reset(
-        self, email: str, token_minutes: int
-    ) -> AccountEmailAction | None:
+    def issue_password_reset(self, email: str, token_minutes: int) -> AccountEmailAction | None:
         now = _now()
         email_predicate = (
             "LOWER(email) = LOWER(?)"
@@ -392,15 +416,341 @@ class AccountStore:
                 """UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?""",
                 (hash_password(password), now.isoformat(), row["user_id"]),
             )
-            connection.execute(
-                "DELETE FROM auth_sessions WHERE user_id = ?", (row["user_id"],)
-            )
+            connection.execute("DELETE FROM auth_sessions WHERE user_id = ?", (row["user_id"],))
             connection.execute(
                 """UPDATE account_tokens SET used_at = ?
                    WHERE user_id = ? AND purpose = 'reset_password' AND used_at IS NULL""",
                 (now.isoformat(), row["user_id"]),
             )
         return True
+
+    def create_invitation(
+        self,
+        session: AccountSession,
+        email: str,
+        role: str,
+        clearances: list[str],
+        invitation_hours: int,
+    ) -> WorkspaceInvitationAction:
+        now = _now()
+        expires_at = now + timedelta(hours=invitation_hours)
+        invitation_id = str(uuid4())
+        token = secrets.token_urlsafe(32)
+        email_predicate = (
+            "LOWER(u.email) = LOWER(?)"
+            if self.database.dialect == "postgres"
+            else "u.email = ? COLLATE NOCASE"
+        )
+        with self.database.connect() as connection:
+            existing = connection.execute(
+                f"""SELECT 1 FROM workspace_members m JOIN users u ON u.id = m.user_id
+                    WHERE m.workspace_id = ? AND {email_predicate}""",  # noqa: S608
+                (session.workspace_id, email),
+            ).fetchone()
+            if existing:
+                raise InvitationError("This email is already a workspace member")
+            connection.execute(
+                """UPDATE workspace_invitations SET status = 'revoked'
+                   WHERE workspace_id = ? AND LOWER(email) = LOWER(?) AND status = 'pending'""",
+                (session.workspace_id, email),
+            )
+            connection.execute(
+                """INSERT INTO workspace_invitations
+                   (id, workspace_id, email, role, clearances_json, token_hash,
+                    invited_by, status, created_at, expires_at, accepted_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, NULL)""",
+                (
+                    invitation_id,
+                    session.workspace_id,
+                    email,
+                    role,
+                    json.dumps(clearances, separators=(",", ":")),
+                    self._token_hash(token),
+                    session.user_id,
+                    now.isoformat(),
+                    expires_at.isoformat(),
+                ),
+            )
+        return WorkspaceInvitationAction(
+            invitation_id,
+            token,
+            email,
+            session.workspace_name,
+            role,
+            clearances,
+            expires_at,
+        )
+
+    def list_invitations(self, session: AccountSession) -> list[dict[str, Any]]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """SELECT id, email, role, clearances_json, status, expires_at
+                   FROM workspace_invitations WHERE workspace_id = ?
+                   ORDER BY created_at DESC""",
+                (session.workspace_id,),
+            ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "email": row["email"],
+                "role": row["role"],
+                "clearances": json.loads(row["clearances_json"]),
+                "status": (
+                    "expired"
+                    if row["status"] == "pending"
+                    and datetime.fromisoformat(row["expires_at"]) <= _now()
+                    else row["status"]
+                ),
+                "expires_at": row["expires_at"],
+            }
+            for row in rows
+        ]
+
+    def revoke_invitation(self, session: AccountSession, invitation_id: str) -> bool:
+        with self.database.connect() as connection:
+            cursor = connection.execute(
+                """UPDATE workspace_invitations SET status = 'revoked'
+                   WHERE id = ? AND workspace_id = ? AND status = 'pending'""",
+                (invitation_id, session.workspace_id),
+            )
+            return cursor.rowcount == 1
+
+    def accept_invitation(
+        self,
+        token: str,
+        session: AccountSession | None,
+        display_name: str | None,
+        password: str | None,
+    ) -> AccountSession:
+        if len(token) > 200:
+            raise InvitationError("Invitation is invalid or expired")
+        now = _now()
+        session_token = secrets.token_urlsafe(32)
+        csrf_token = secrets.token_urlsafe(24)
+        session_expires = now + timedelta(hours=self.session_hours)
+        with self.database.connect() as connection:
+            invitation = connection.execute(
+                """SELECT i.*, w.name workspace_name, w.plan
+                   FROM workspace_invitations i
+                   JOIN workspaces w ON w.id = i.workspace_id
+                   WHERE i.token_hash = ? AND i.status = 'pending' AND i.expires_at > ?""",
+                (self._token_hash(token), now.isoformat()),
+            ).fetchone()
+            if not invitation:
+                raise InvitationError("Invitation is invalid or expired")
+            claimed = connection.execute(
+                """UPDATE workspace_invitations SET status = 'accepted', accepted_at = ?
+                   WHERE id = ? AND status = 'pending'""",
+                (now.isoformat(), invitation["id"]),
+            )
+            if claimed.rowcount != 1:
+                raise InvitationError("Invitation is invalid or expired")
+            if session:
+                if session.email.lower() != invitation["email"].lower():
+                    raise InvitationError("Sign in with the invited email address")
+                user_id = session.user_id
+                email = session.email
+                name = session.display_name
+                connection.execute(
+                    "DELETE FROM auth_sessions WHERE token_hash = ?",
+                    (self._token_hash(session.token),),
+                )
+            else:
+                if not display_name or not password:
+                    raise InvitationError("Sign in, or provide a name and password to join")
+                email_predicate = (
+                    "LOWER(email) = LOWER(?)"
+                    if self.database.dialect == "postgres"
+                    else "email = ? COLLATE NOCASE"
+                )
+                existing = connection.execute(
+                    f"SELECT id FROM users WHERE {email_predicate}",  # noqa: S608
+                    (invitation["email"],),
+                ).fetchone()
+                if existing:
+                    raise InvitationError("An account exists for this email. Sign in to accept")
+                user_id = str(uuid4())
+                email = invitation["email"]
+                name = display_name
+                connection.execute(
+                    """INSERT INTO users
+                       (id, email, display_name, password_hash, status, email_verified_at,
+                        created_at, updated_at)
+                       VALUES (?, ?, ?, ?, 'active', ?, ?, ?)""",
+                    (
+                        user_id,
+                        email,
+                        name,
+                        hash_password(password),
+                        now.isoformat(),
+                        now.isoformat(),
+                        now.isoformat(),
+                    ),
+                )
+            membership = connection.execute(
+                """SELECT 1 FROM workspace_members WHERE workspace_id = ? AND user_id = ?""",
+                (invitation["workspace_id"], user_id),
+            ).fetchone()
+            if not membership:
+                connection.execute(
+                    """INSERT INTO workspace_members
+                       (workspace_id, user_id, role, clearances_json, created_at)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (
+                        invitation["workspace_id"],
+                        user_id,
+                        invitation["role"],
+                        invitation["clearances_json"],
+                        now.isoformat(),
+                    ),
+                )
+            self._insert_session(
+                connection,
+                session_token,
+                csrf_token,
+                user_id,
+                invitation["workspace_id"],
+                now,
+                session_expires,
+            )
+        return AccountSession(
+            token=session_token,
+            csrf_token=csrf_token,
+            user_id=user_id,
+            email=email,
+            display_name=name,
+            workspace_id=invitation["workspace_id"],
+            workspace_name=invitation["workspace_name"],
+            role=invitation["role"],
+            clearances=json.loads(invitation["clearances_json"]),
+            plan=invitation["plan"],
+            expires_at=session_expires,
+        )
+
+    def list_workspaces(self, session: AccountSession) -> list[dict[str, Any]]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """SELECT w.id, w.name, w.plan, w.created_by, m.role, m.clearances_json,
+                          (SELECT COUNT(*) FROM workspace_members members
+                           WHERE members.workspace_id = w.id) member_count
+                   FROM workspace_members m JOIN workspaces w ON w.id = m.workspace_id
+                   WHERE m.user_id = ? ORDER BY w.created_at""",
+                (session.user_id,),
+            ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "plan": row["plan"],
+                "created_by": row["created_by"],
+                "role": row["role"],
+                "clearances": json.loads(row["clearances_json"]),
+                "member_count": row["member_count"],
+            }
+            for row in rows
+        ]
+
+    def switch_workspace(self, session: AccountSession, workspace_id: str) -> AccountSession | None:
+        now = _now()
+        with self.database.connect() as connection:
+            row = connection.execute(
+                """SELECT u.id user_id, u.email, u.display_name,
+                          w.id workspace_id, w.name workspace_name, w.plan,
+                          m.role, m.clearances_json
+                   FROM users u JOIN workspace_members m ON m.user_id = u.id
+                   JOIN workspaces w ON w.id = m.workspace_id
+                   WHERE u.id = ? AND w.id = ? AND u.status = 'active'""",
+                (session.user_id, workspace_id),
+            ).fetchone()
+            if not row:
+                return None
+            token = secrets.token_urlsafe(32)
+            csrf_token = secrets.token_urlsafe(24)
+            expires_at = now + timedelta(hours=self.session_hours)
+            connection.execute(
+                "DELETE FROM auth_sessions WHERE token_hash = ?",
+                (self._token_hash(session.token),),
+            )
+            self._insert_session(
+                connection, token, csrf_token, session.user_id, workspace_id, now, expires_at
+            )
+        return self._from_row(row, token, csrf_token, expires_at)
+
+    def delete_account(self, session: AccountSession, password: str) -> tuple[list[str], list[str]]:
+        with self.database.connect() as connection:
+            user = connection.execute(
+                "SELECT password_hash FROM users WHERE id = ?", (session.user_id,)
+            ).fetchone()
+            encoded = user["password_hash"] if user else _DUMMY_PASSWORD_HASH
+            if not user or not verify_password(password, encoded):
+                raise InvitationError("Password is incorrect")
+            owned = connection.execute(
+                """SELECT w.id, w.name,
+                          (SELECT COUNT(*) FROM workspace_members m
+                           WHERE m.workspace_id = w.id) member_count
+                   FROM workspaces w WHERE w.created_by = ?""",
+                (session.user_id,),
+            ).fetchall()
+            shared = [row["name"] for row in owned if row["member_count"] > 1]
+            if shared:
+                raise AccountDeletionBlocked(
+                    "Transfer or remove other members before deleting this account"
+                )
+            workspace_ids = [row["id"] for row in owned]
+            original_paths: list[str] = []
+            staged_paths: list[str] = []
+            for workspace_id in workspace_ids:
+                original_paths.extend(
+                    row["storage_path"]
+                    for row in connection.execute(
+                        """SELECT storage_path FROM documents
+                           WHERE tenant_id = ? AND storage_path IS NOT NULL""",
+                        (workspace_id,),
+                    ).fetchall()
+                )
+                staged_paths.extend(
+                    row["storage_path"]
+                    for row in connection.execute(
+                        """SELECT storage_path FROM ingestion_jobs
+                           WHERE tenant_id = ? AND storage_path IS NOT NULL""",
+                        (workspace_id,),
+                    ).fetchall()
+                )
+                connection.execute("DELETE FROM feedback WHERE tenant_id = ?", (workspace_id,))
+                connection.execute(
+                    "DELETE FROM answer_diagnostics WHERE tenant_id = ?", (workspace_id,)
+                )
+                connection.execute(
+                    "DELETE FROM messages WHERE conversation_id IN (SELECT id FROM conversations WHERE tenant_id = ?)",
+                    (workspace_id,),
+                )
+                connection.execute("DELETE FROM conversations WHERE tenant_id = ?", (workspace_id,))
+                for table in (
+                    "ingestion_jobs",
+                    "audit_events",
+                    "payment_events",
+                    "model_usage_events",
+                    "model_usage_daily",
+                    "documents",
+                ):
+                    connection.execute(
+                        f'DELETE FROM "{table}" WHERE tenant_id = ?', (workspace_id,)
+                    )
+                connection.execute("DELETE FROM workspaces WHERE id = ?", (workspace_id,))
+            connection.execute(
+                "UPDATE workspace_invitations SET status = 'revoked' WHERE invited_by = ? AND status = 'pending'",
+                (session.user_id,),
+            )
+            connection.execute(
+                "DELETE FROM workspace_invitations WHERE invited_by = ?", (session.user_id,)
+            )
+            connection.execute(
+                "DELETE FROM workspace_members WHERE user_id = ?", (session.user_id,)
+            )
+            connection.execute("DELETE FROM auth_sessions WHERE user_id = ?", (session.user_id,))
+            connection.execute("DELETE FROM account_tokens WHERE user_id = ?", (session.user_id,))
+            connection.execute("DELETE FROM users WHERE id = ?", (session.user_id,))
+        return original_paths, staged_paths
 
     def login(self, email: str, password: str) -> AccountSession | None:
         email_predicate = (
@@ -422,19 +772,16 @@ class AccountStore:
             ).fetchone()
         encoded = row["password_hash"] if row else _DUMMY_PASSWORD_HASH
         password_matches = verify_password(password, encoded)
-        if (
-            not row
-            or not password_matches
-            or row["status"] != "active"
-            or not row["workspace_id"]
-        ):
+        if not row or not password_matches or row["status"] != "active" or not row["workspace_id"]:
             return None
         now = _now()
         token = secrets.token_urlsafe(32)
         csrf_token = secrets.token_urlsafe(24)
         expires_at = now + timedelta(hours=self.session_hours)
         with self.database.connect() as connection:
-            connection.execute("DELETE FROM auth_sessions WHERE expires_at <= ?", (now.isoformat(),))
+            connection.execute(
+                "DELETE FROM auth_sessions WHERE expires_at <= ?", (now.isoformat(),)
+            )
             self._insert_session(
                 connection,
                 token,
@@ -527,6 +874,7 @@ def account_page(
     registration_enabled: bool,
     verification_required: bool = False,
     password_reset_enabled: bool = False,
+    next_path: str = "/",
 ) -> str:
     registration_tab = (
         '<button class="mode" data-mode="register" type="button">Create account</button>'
@@ -552,6 +900,7 @@ def account_page(
         if verification_required
         else "Your documents and conversations stay inside your workspace."
     )
+    next_path_json = json.dumps(next_path).replace("<", "\\u003c")
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive">
 <title>Sign in · EvidenceDesk</title><style>
@@ -560,8 +909,13 @@ def account_page(
 </style></head><body><main class="shell"><section class="story"><div class="brand"><span class="sigil">ED</span>EvidenceDesk</div><div class="kicker">Private evidence workspace</div><h1>Answers should earn trust.<span>Start with the source.</span></h1><p class="deck">Upload approved organizational documents, ask in normal language, and inspect the exact evidence behind each supported answer.</p><div class="proof"><span>Private workspace</span><span>Page citations</span><span>Safe refusal</span><span>OCR ready</span></div></section><section class="auth"><div class="maker"><img src="/developer-signature.png" alt="IZAQ developer portrait"><div><b>IZAQ</b><small>Product direction · design × engineering</small></div></div><div><h2 id="title">Welcome back</h2><p id="subtitle" style="color:var(--muted)">{registration_note}</p></div><div class="modes"><button class="mode active" data-mode="login" type="button">Sign in</button>{registration_tab}</div><form id="form"><div id="nameBlock" class="hidden"><label for="name">Your name</label><input id="name" autocomplete="name" maxlength="80"></div><label for="email">Email address</label><input id="email" type="email" autocomplete="email" maxlength="254" required><label for="password">Password</label><input id="password" type="password" autocomplete="current-password" maxlength="128" required><button id="submit" class="submit">Enter EvidenceDesk →</button><div id="status" class="status" role="status" aria-live="polite"></div></form>{forgot_link}<p class="fine">Sessions use secure HttpOnly cookies. Your workspace is isolated from other users before document retrieval.</p></section></main><script>
 const modes=[...document.querySelectorAll('[data-mode]')],nameBlock=document.querySelector('#nameBlock'),form=document.querySelector('#form'),status=document.querySelector('#status'),submit=document.querySelector('#submit');let mode='login';
 modes.forEach(button=>button.onclick=()=>{{mode=button.dataset.mode;modes.forEach(item=>item.classList.toggle('active',item===button));let register=mode==='register';nameBlock.classList.toggle('hidden',!register);document.querySelector('#name').required=register;document.querySelector('#password').autocomplete=register?'new-password':'current-password';document.querySelector('#title').textContent=register?'Create your private workspace':'Welcome back';document.querySelector('#subtitle').textContent=register?{registration_prompt}:'Sign in to continue to your evidence workspace.';submit.textContent=register?'Create workspace →':'Enter EvidenceDesk →'}});
-form.onsubmit=async event=>{{event.preventDefault();status.textContent=mode==='register'?'Creating your secure workspace…':'Verifying your account…';status.className='status';submit.disabled=true;let body={{email:document.querySelector('#email').value,password:document.querySelector('#password').value}};if(mode==='register')body.display_name=document.querySelector('#name').value;try{{let response=await fetch('/v1/auth/'+mode,{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(body)}}),data=await response.json().catch(()=>({{detail:'Unexpected response'}}));if(!response.ok)throw new Error(typeof data.detail==='string'?data.detail:'Please check the form and try again.');if(data.action_required==='verify_email'){{status.textContent=data.message;submit.disabled=false;return}}location.replace('/')}}catch(error){{status.textContent=error.message;status.className='status error';submit.disabled=false}}}};
+form.onsubmit=async event=>{{event.preventDefault();status.textContent=mode==='register'?'Creating your secure workspace…':'Verifying your account…';status.className='status';submit.disabled=true;let body={{email:document.querySelector('#email').value,password:document.querySelector('#password').value}};if(mode==='register')body.display_name=document.querySelector('#name').value;try{{let response=await fetch('/v1/auth/'+mode,{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(body)}}),data=await response.json().catch(()=>({{detail:'Unexpected response'}}));if(!response.ok)throw new Error(typeof data.detail==='string'?data.detail:'Please check the form and try again.');if(data.action_required==='verify_email'){{status.textContent=data.message;submit.disabled=false;return}}location.replace({next_path_json})}}catch(error){{status.textContent=error.message;status.className='status error';submit.disabled=false}}}};
 </script></body></html>"""
+
+
+def invitation_page(token: str) -> str:
+    token_json = json.dumps(token).replace("<", "\\u003c")
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive"><title>Join workspace · EvidenceDesk</title><style>:root{{color-scheme:dark;--gold:#ffc35c;--green:#3deba0;--ink:#f6f7ef;--muted:#9ca9a1;--line:#213c2e}}*{{box-sizing:border-box}}body{{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at 15% 12%,#744cff2c,transparent 30%),radial-gradient(circle at 85% 80%,#25d99720,transparent 35%),#050907;color:var(--ink);font:14px/1.55 Inter,"Segoe UI",system-ui,sans-serif}}main{{width:min(540px,100%);padding:42px;border:1px solid var(--line);border-radius:24px;background:#0c1511;box-shadow:0 35px 110px #000b}}.brand{{color:var(--gold);font:700 13px ui-monospace,monospace;letter-spacing:.16em}}h1{{font:650 46px/1 Georgia,serif;letter-spacing:-.04em;margin:24px 0 14px}}p{{color:var(--muted)}}label{{display:block;margin:19px 0 7px;color:var(--muted);font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.12em}}input{{width:100%;padding:13px;border:1px solid var(--line);border-radius:11px;background:#07100c;color:var(--ink);font:inherit}}button{{width:100%;margin-top:24px;padding:13px;border:0;border-radius:11px;background:linear-gradient(135deg,#ffd47e,#b67921);color:#151008;font-weight:850;cursor:pointer}}button:disabled{{opacity:.55}}#status{{min-height:24px;margin-top:14px;color:var(--green)}}#status.error{{color:#ff9a92}}a{{color:var(--gold)}}.hidden{{display:none}}.session{{padding:12px;border:1px solid var(--line);border-radius:11px;color:var(--green);background:#07100c}}</style></head><body><main><div class="brand">EVIDENCEDESK · SECURE INVITATION</div><h1>Join the evidence workspace.</h1><p>This one-time invitation gives you only the role and document clearances selected by the workspace administrator.</p><div id="session" class="session hidden"></div><form id="form"><div id="newAccount"><label for="name">Your name</label><input id="name" autocomplete="name" minlength="2" maxlength="80"><label for="password">Create a password</label><input id="password" type="password" autocomplete="new-password" minlength="12" maxlength="128"></div><button id="submit">Accept invitation →</button><div id="status" role="status" aria-live="polite"></div></form><p id="signin"><a href="/signin">Already have an account? Sign in first</a></p></main><script>const token={token_json},form=document.querySelector('#form'),submit=document.querySelector('#submit'),status=document.querySelector('#status'),newAccount=document.querySelector('#newAccount'),sessionBox=document.querySelector('#session'),signin=document.querySelector('#signin');let csrf='',signedIn=false;const next=location.pathname+location.search;signin.querySelector('a').href='/signin?next='+encodeURIComponent(next);async function detectSession(){{const response=await fetch('/v1/auth/me');if(!response.ok)return;const account=await response.json();signedIn=true;csrf=account.csrf_token;newAccount.classList.add('hidden');signin.classList.add('hidden');sessionBox.classList.remove('hidden');sessionBox.textContent='Signed in as '+account.email+'. Accept to switch into the invited workspace.'}}detectSession();form.onsubmit=async event=>{{event.preventDefault();submit.disabled=true;status.className='';status.textContent='Accepting invitation…';const body={{token}};if(!signedIn){{body.display_name=document.querySelector('#name').value;body.password=document.querySelector('#password').value}}try{{const headers={{'Content-Type':'application/json'}};if(csrf)headers['X-CSRF-Token']=csrf;const response=await fetch('/v1/auth/invitations/accept',{{method:'POST',headers,body:JSON.stringify(body)}}),data=await response.json().catch(()=>({{detail:'Unexpected response'}}));if(!response.ok)throw new Error(typeof data.detail==='string'?data.detail:'Invitation could not be accepted');status.textContent='Workspace joined. Opening EvidenceDesk…';setTimeout(()=>location.replace('/'),500)}}catch(error){{status.textContent=error.message;status.className='error';submit.disabled=false}}}};</script></body></html>"""
 
 
 def account_recovery_page(mode: str, token: str | None = None) -> str:
@@ -603,9 +957,5 @@ def account_recovery_page(mode: str, token: str | None = None) -> str:
             "redirect": "setTimeout(()=>location.replace('/'),500);",
         },
     }[mode]
-    label = (
-        f'<label for="value">{configuration["label"]}</label>'
-        if configuration["label"]
-        else ""
-    )
+    label = f'<label for="value">{configuration["label"]}</label>' if configuration["label"] else ""
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive"><title>{configuration["title"]} · EvidenceDesk</title><style>:root{{color-scheme:dark;--gold:#ffc35c;--green:#3deba0;--ink:#f6f7ef;--muted:#9ca9a1;--line:#213c2e}}*{{box-sizing:border-box}}body{{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at 15% 12%,#744cff2c,transparent 30%),#050907;color:var(--ink);font:14px/1.55 Inter,"Segoe UI",system-ui,sans-serif}}main{{width:min(500px,100%);padding:42px;border:1px solid var(--line);border-radius:24px;background:#0c1511;box-shadow:0 35px 110px #000b}}.brand{{color:var(--gold);font:700 13px ui-monospace,monospace;letter-spacing:.16em}}h1{{font:650 42px/1 Georgia,serif;letter-spacing:-.04em;margin:24px 0 14px}}p{{color:var(--muted)}}label{{display:block;margin:24px 0 7px;color:var(--muted);font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.12em}}input{{width:100%;padding:13px;border:1px solid var(--line);border-radius:11px;background:#07100c;color:var(--ink);font:inherit}}button{{width:100%;margin-top:24px;padding:13px;border:0;border-radius:11px;background:linear-gradient(135deg,#ffd47e,#b67921);color:#151008;font-weight:850;cursor:pointer}}button:disabled{{opacity:.55}}#status{{min-height:24px;margin-top:14px;color:var(--green)}}#status.error{{color:#ff9a92}}a{{color:var(--gold)}}</style></head><body><main><div class="brand">EVIDENCEDESK · ACCOUNT SAFETY</div><h1>{configuration["title"]}</h1><p>{configuration["description"]}</p><form id="form">{label}{configuration["input"]}<button id="submit">{configuration["button"]}</button><div id="status" role="status" aria-live="polite"></div></form><p><a href="/signin">Return to sign in</a></p></main><script>const form=document.querySelector('#form'),submit=document.querySelector('#submit'),status=document.querySelector('#status'),value=document.querySelector('#value');form.onsubmit=async event=>{{event.preventDefault();submit.disabled=true;status.className='';status.textContent='Working…';try{{const response=await fetch('{configuration["endpoint"]}',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({configuration["body"]})}}),data=await response.json().catch(()=>({{detail:'Unexpected response'}}));if(!response.ok)throw new Error(typeof data.detail==='string'?data.detail:'Request failed');status.textContent={configuration["success"]};{configuration["redirect"]}}}catch(error){{status.textContent=error.message;status.className='error';submit.disabled=false}}}};</script></body></html>"""

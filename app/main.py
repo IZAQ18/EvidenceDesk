@@ -25,13 +25,19 @@ from fastapi.responses import (
 )
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from app.account_export import ExportTooLarge, build_workspace_export
 from app.accounts import (
     ACCOUNT_COOKIE,
+    AccountDeletionBlocked,
     AccountEmailAction,
     AccountExistsError,
+    AccountSession,
     AccountStore,
+    InvitationError,
+    WorkspaceInvitationAction,
     account_page,
     account_recovery_page,
+    invitation_page,
 )
 from app.config import Classification, Settings, get_settings
 from app.db import build_database
@@ -48,6 +54,7 @@ from app.ingestion_worker import run_ingestion_worker, stop_ingestion_worker
 from app.model_gateway import ModelGateway, ModelTransport
 from app.models import (
     AccountActionOut,
+    AccountDeleteRequest,
     AccountEmailRequest,
     AccountLoginRequest,
     AccountOut,
@@ -64,6 +71,10 @@ from app.models import (
     IngestionJobOut,
     MessageOut,
     Principal,
+    WorkspaceInvitationAcceptRequest,
+    WorkspaceInvitationOut,
+    WorkspaceInvitationRequest,
+    WorkspaceOut,
 )
 from app.payments import InvalidPaymentWebhook, parse_lemonsqueezy_webhook
 from app.pilot import (
@@ -243,12 +254,14 @@ def create_app(
             "/forgot-password",
             "/reset-password",
             "/verify-email",
+            "/invitation",
             "/v1/auth/register",
             "/v1/auth/login",
             "/v1/auth/verify-email",
             "/v1/auth/verification/resend",
             "/v1/auth/password-reset/request",
             "/v1/auth/password-reset/complete",
+            "/v1/auth/invitations/accept",
             "/about",
             "/v1/payments/webhook",
         }
@@ -309,7 +322,9 @@ def create_app(
         try:
             checks["original_storage"] = storage.ping()
         except Exception as exc:
-            logger.warning("readiness_failed dependency=original_storage type=%s", type(exc).__name__)
+            logger.warning(
+                "readiness_failed dependency=original_storage type=%s", type(exc).__name__
+            )
         ready = all(checks.values())
         return JSONResponse(
             {"status": "ready" if ready else "unavailable", "checks": checks},
@@ -351,17 +366,13 @@ def create_app(
             )
         )
 
-    @app.get(
-        "/access", response_class=HTMLResponse, response_model=None, include_in_schema=False
-    )
+    @app.get("/access", response_class=HTMLResponse, response_model=None, include_in_schema=False)
     def pilot_access(request: Request) -> HTMLResponse | RedirectResponse:
         if not resolved_settings.pilot_access_code or has_pilot_access(request, resolved_settings):
             return RedirectResponse("/", status_code=307)
         return HTMLResponse(access_page())
 
-    @app.post(
-        "/access", response_class=HTMLResponse, response_model=None, include_in_schema=False
-    )
+    @app.post("/access", response_class=HTMLResponse, response_model=None, include_in_schema=False)
     def unlock_pilot(access_code: str = Form(...)) -> HTMLResponse | RedirectResponse:
         expected = resolved_settings.pilot_access_code
         if not expected or not hmac.compare_digest(access_code, expected):
@@ -389,19 +400,29 @@ def create_app(
             path="/",
         )
 
-    @app.get(
-        "/signin", response_class=HTMLResponse, response_model=None, include_in_schema=False
-    )
-    def signin(request: Request) -> HTMLResponse | RedirectResponse:
+    def required_account_session(request: Request) -> AccountSession:
+        session = resolve_account_session(request, resolved_settings)
+        if not session:
+            raise HTTPException(status_code=401, detail="Sign in required")
+        return session
+
+    @app.get("/signin", response_class=HTMLResponse, response_model=None, include_in_schema=False)
+    def signin(request: Request, next: str = "/") -> HTMLResponse | RedirectResponse:
+        next_path = (
+            next
+            if next.startswith("/") and not next.startswith("//") and "\\" not in next
+            else "/"
+        )
         if not resolved_settings.accounts_enabled:
             return RedirectResponse("/access" if resolved_settings.pilot_access_code else "/")
         if resolve_account_session(request, resolved_settings):
-            return RedirectResponse("/", status_code=307)
+            return RedirectResponse(next_path, status_code=307)
         return HTMLResponse(
             account_page(
                 resolved_settings.account_registration_enabled,
                 resolved_settings.account_email_verification_required,
                 resolved_settings.account_password_reset_enabled,
+                next_path,
             )
         )
 
@@ -413,8 +434,7 @@ def create_app(
     )
     def forgot_password_page() -> HTMLResponse | RedirectResponse:
         if not (
-            resolved_settings.accounts_enabled
-            and resolved_settings.account_password_reset_enabled
+            resolved_settings.accounts_enabled and resolved_settings.account_password_reset_enabled
         ):
             return RedirectResponse("/signin", status_code=307)
         return HTMLResponse(account_recovery_page("forgot"))
@@ -427,8 +447,7 @@ def create_app(
     )
     def reset_password_page(token: str = "") -> HTMLResponse | RedirectResponse:
         if not (
-            resolved_settings.accounts_enabled
-            and resolved_settings.account_password_reset_enabled
+            resolved_settings.accounts_enabled and resolved_settings.account_password_reset_enabled
         ):
             return RedirectResponse("/signin", status_code=307)
         return HTMLResponse(account_recovery_page("reset", token[:200]))
@@ -447,30 +466,53 @@ def create_app(
             return RedirectResponse("/signin", status_code=307)
         return HTMLResponse(account_recovery_page("verify", token[:200]))
 
+    @app.get(
+        "/invitation", response_class=HTMLResponse, response_model=None, include_in_schema=False
+    )
+    def workspace_invitation_page(token: str = "") -> HTMLResponse | RedirectResponse:
+        if not (
+            resolved_settings.accounts_enabled and resolved_settings.account_invitations_enabled
+        ):
+            return RedirectResponse("/signin", status_code=307)
+        return HTMLResponse(invitation_page(token[:200]))
+
     def account_action_url(path: str, token: str) -> str:
         base_url = (resolved_settings.public_base_url or "http://localhost:8000").rstrip("/")
         return f"{base_url}{path}?token={quote(token, safe='')}"
 
-    def deliver_account_email(purpose: str, action: AccountEmailAction) -> None:
+    def deliver_account_email(
+        purpose: str, action: AccountEmailAction | WorkspaceInvitationAction
+    ) -> bool:
         try:
             if purpose == "verify_email":
+                assert isinstance(action, AccountEmailAction)
                 email_sender.send_verification(
                     action.email,
                     action.display_name,
                     account_action_url("/verify-email", action.token),
                 )
-            else:
+            elif purpose == "reset_password":
+                assert isinstance(action, AccountEmailAction)
                 email_sender.send_password_reset(
                     action.email,
                     action.display_name,
                     account_action_url("/reset-password", action.token),
                 )
+            else:
+                assert isinstance(action, WorkspaceInvitationAction)
+                email_sender.send_invitation(
+                    action.email,
+                    action.workspace_name,
+                    account_action_url("/invitation", action.token),
+                )
+            return True
         except Exception as exc:
             logger.warning(
                 "account_email_delivery_failed purpose=%s type=%s",
                 purpose,
                 type(exc).__name__,
             )
+            return False
 
     @app.post(
         "/v1/auth/register",
@@ -577,8 +619,7 @@ def create_app(
     )
     def request_password_reset(payload: AccountEmailRequest) -> AccountActionOut:
         if not (
-            resolved_settings.accounts_enabled
-            and resolved_settings.account_password_reset_enabled
+            resolved_settings.accounts_enabled and resolved_settings.account_password_reset_enabled
         ):
             raise HTTPException(status_code=404, detail="Password recovery is not configured")
         action = account_store.issue_password_reset(
@@ -599,8 +640,7 @@ def create_app(
         payload: AccountPasswordResetRequest, response: Response
     ) -> AccountActionOut:
         if not (
-            resolved_settings.accounts_enabled
-            and resolved_settings.account_password_reset_enabled
+            resolved_settings.accounts_enabled and resolved_settings.account_password_reset_enabled
         ):
             raise HTTPException(status_code=404, detail="Password recovery is not configured")
         reset = account_store.reset_password(
@@ -642,10 +682,214 @@ def create_app(
             raise HTTPException(status_code=401, detail="Sign in required")
         return session.public()
 
-    @app.post("/v1/auth/logout", status_code=204)
-    def logout_account(
-        request: Request, _: Principal = Depends(authenticate_key)
+    @app.post(
+        "/v1/auth/invitations/accept",
+        response_model=AccountOut,
+        dependencies=[Depends(enforce_rate_limit)],
+    )
+    def accept_workspace_invitation(
+        payload: WorkspaceInvitationAcceptRequest,
+        request: Request,
+        response: Response,
+    ) -> AccountOut:
+        if not (
+            resolved_settings.accounts_enabled and resolved_settings.account_invitations_enabled
+        ):
+            raise HTTPException(status_code=404, detail="Workspace invitations are not configured")
+        current = resolve_account_session(request, resolved_settings)
+        if current and not hmac.compare_digest(
+            request.headers.get("X-CSRF-Token", ""), current.csrf_token
+        ):
+            raise HTTPException(status_code=403, detail="Invalid session security token")
+        try:
+            session = account_store.accept_invitation(
+                payload.token.get_secret_value(),
+                current,
+                payload.display_name,
+                payload.password.get_secret_value() if payload.password else None,
+            )
+        except InvitationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        set_account_cookie(response, session.token)
+        repository.audit(
+            session.principal,
+            "workspace_invitation_accepted",
+            "user",
+            session.user_id,
+            {"role": session.role},
+        )
+        return session.public()
+
+    @app.post(
+        "/v1/account/invitations",
+        response_model=WorkspaceInvitationOut,
+        status_code=201,
+    )
+    def create_workspace_invitation(
+        payload: WorkspaceInvitationRequest,
+        request: Request,
+        _: Principal = Depends(require_admin),
+    ) -> WorkspaceInvitationOut:
+        if not resolved_settings.account_invitations_enabled:
+            raise HTTPException(status_code=404, detail="Workspace invitations are not configured")
+        session = required_account_session(request)
+        try:
+            action = account_store.create_invitation(
+                session,
+                payload.email,
+                payload.role,
+                payload.clearances,
+                resolved_settings.account_invitation_hours,
+            )
+        except InvitationError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if not deliver_account_email("workspace_invitation", action):
+            account_store.revoke_invitation(session, action.invitation_id)
+            raise HTTPException(status_code=503, detail="Invitation email could not be delivered")
+        repository.audit(
+            session.principal,
+            "workspace_invitation_created",
+            "workspace_invitation",
+            action.invitation_id,
+            {"role": action.role, "clearances": action.clearances},
+        )
+        return WorkspaceInvitationOut(
+            id=action.invitation_id,
+            email=action.email,
+            role=action.role,
+            clearances=action.clearances,
+            status="pending",
+            expires_at=action.expires_at,
+        )
+
+    @app.get(
+        "/v1/account/invitations",
+        response_model=list[WorkspaceInvitationOut],
+    )
+    def workspace_invitations(
+        request: Request, _: Principal = Depends(require_admin)
+    ) -> list[WorkspaceInvitationOut]:
+        if not resolved_settings.account_invitations_enabled:
+            raise HTTPException(status_code=404, detail="Workspace invitations are not configured")
+        session = required_account_session(request)
+        return [WorkspaceInvitationOut(**item) for item in account_store.list_invitations(session)]
+
+    @app.delete("/v1/account/invitations/{invitation_id}", status_code=204)
+    def revoke_workspace_invitation(
+        invitation_id: str,
+        request: Request,
+        _: Principal = Depends(require_admin),
     ) -> Response:
+        if not resolved_settings.account_invitations_enabled:
+            raise HTTPException(status_code=404, detail="Workspace invitations are not configured")
+        session = required_account_session(request)
+        if not account_store.revoke_invitation(session, invitation_id):
+            raise HTTPException(status_code=404, detail="Pending invitation not found")
+        repository.audit(
+            session.principal,
+            "workspace_invitation_revoked",
+            "workspace_invitation",
+            invitation_id,
+        )
+        return Response(status_code=204)
+
+    @app.get("/v1/account/workspaces", response_model=list[WorkspaceOut])
+    def account_workspaces(
+        request: Request, _: Principal = Depends(authenticate_key)
+    ) -> list[WorkspaceOut]:
+        session = required_account_session(request)
+        return [WorkspaceOut(**item) for item in account_store.list_workspaces(session)]
+
+    @app.post("/v1/account/workspaces/{workspace_id}/switch", response_model=AccountOut)
+    def switch_account_workspace(
+        workspace_id: str,
+        request: Request,
+        response: Response,
+        _: Principal = Depends(authenticate_key),
+    ) -> AccountOut:
+        session = required_account_session(request)
+        switched = account_store.switch_workspace(session, workspace_id)
+        if not switched:
+            raise HTTPException(status_code=404, detail="Workspace membership not found")
+        set_account_cookie(response, switched.token)
+        repository.audit(
+            switched.principal,
+            "workspace_switched",
+            "workspace",
+            switched.workspace_id,
+        )
+        return switched.public()
+
+    @app.post("/v1/account/export")
+    def export_account_workspace(
+        request: Request, _: Principal = Depends(require_admin)
+    ) -> Response:
+        if not resolved_settings.account_export_enabled:
+            raise HTTPException(status_code=404, detail="Workspace export is not configured")
+        session = required_account_session(request)
+        try:
+            archive = build_workspace_export(
+                database,
+                storage,
+                session,
+                resolved_settings.account_export_max_bytes,
+            )
+        except ExportTooLarge as exc:
+            raise HTTPException(status_code=413, detail=str(exc)) from exc
+        repository.audit(
+            session.principal,
+            "workspace_export_created",
+            "workspace",
+            session.workspace_id,
+        )
+        return Response(
+            content=archive,
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="evidencedesk-export-{date.today().isoformat()}.zip"'
+                )
+            },
+        )
+
+    @app.post("/v1/account/delete", status_code=204)
+    def delete_account(
+        payload: AccountDeleteRequest,
+        request: Request,
+        _: Principal = Depends(authenticate_key),
+    ) -> Response:
+        if not resolved_settings.account_deletion_enabled:
+            raise HTTPException(status_code=404, detail="Account deletion is not configured")
+        session = required_account_session(request)
+        try:
+            originals, staged = account_store.delete_account(
+                session, payload.password.get_secret_value()
+            )
+        except InvitationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except AccountDeletionBlocked as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        failures = 0
+        for reference in set(originals + staged):
+            try:
+                storage.delete(reference)
+            except Exception as exc:
+                failures += 1
+                logger.warning("account_storage_cleanup_failed type=%s", type(exc).__name__)
+        if failures:
+            logger.warning("account_storage_cleanup_incomplete failures=%s", failures)
+        response = Response(status_code=204)
+        response.delete_cookie(
+            ACCOUNT_COOKIE,
+            httponly=True,
+            secure=resolved_settings.env == "production",
+            samesite="lax",
+            path="/",
+        )
+        return response
+
+    @app.post("/v1/auth/logout", status_code=204)
+    def logout_account(request: Request, _: Principal = Depends(authenticate_key)) -> Response:
         account_store.logout(request.cookies.get(ACCOUNT_COOKIE))
         response = Response(status_code=204)
         response.delete_cookie(
@@ -768,7 +1012,9 @@ def create_app(
         expiry = _date_value(expires_at, "Expiry date")
         if effective and expiry and expiry < effective:
             raise HTTPException(status_code=422, detail="Expiry date cannot precede effective date")
-        if supersedes_document_id and not repository.get_document(supersedes_document_id, principal):
+        if supersedes_document_id and not repository.get_document(
+            supersedes_document_id, principal
+        ):
             raise HTTPException(status_code=404, detail="Superseded document not found")
 
         content = await file.read(settings_value.max_upload_bytes + 1)
@@ -896,7 +1142,9 @@ def create_app(
         expiry = _date_value(expires_at, "Expiry date")
         if effective and expiry and expiry < effective:
             raise HTTPException(status_code=422, detail="Expiry date cannot precede effective date")
-        if supersedes_document_id and not repository.get_document(supersedes_document_id, principal):
+        if supersedes_document_id and not repository.get_document(
+            supersedes_document_id, principal
+        ):
             raise HTTPException(status_code=404, detail="Superseded document not found")
 
         extracted = await extract_upload(file, settings_value)
@@ -964,7 +1212,8 @@ def create_app(
             documents = [
                 item
                 for item in documents
-                if needle in f"{item['filename']} {item.get('source') or ''} {item.get('collection') or ''}".lower()
+                if needle
+                in f"{item['filename']} {item.get('source') or ''} {item.get('collection') or ''}".lower()
             ]
         if classification:
             documents = [item for item in documents if item["classification"] == classification]
@@ -1035,7 +1284,9 @@ def create_app(
             raise HTTPException(status_code=404, detail="Document not found")
         repository.audit(principal, f"document_{payload.status}", "document", document_id)
         document = repository.get_document(document_id, principal)
-        listed = next(item for item in repository.list_documents(principal) if item["id"] == document_id)
+        listed = next(
+            item for item in repository.list_documents(principal) if item["id"] == document_id
+        )
         assert document is not None
         return DocumentOut(**listed)
 
@@ -1044,9 +1295,7 @@ def create_app(
         status_code=204,
         dependencies=[Depends(enforce_rate_limit)],
     )
-    def delete_document(
-        document_id: str, principal: Principal = Depends(require_admin)
-    ) -> None:
+    def delete_document(document_id: str, principal: Principal = Depends(require_admin)) -> None:
         deleted, storage_path = repository.delete_document(document_id, principal)
         if not deleted:
             raise HTTPException(status_code=404, detail="Document not found")
@@ -1146,9 +1395,7 @@ def create_app(
         payload: FeedbackRequest, principal: Principal = Depends(authenticate_key)
     ) -> dict[str, str]:
         comment = _clean_optional(payload.comment, 500)
-        if not repository.add_feedback(
-            principal, payload.message_id, payload.category, comment
-        ):
+        if not repository.add_feedback(principal, payload.message_id, payload.category, comment):
             raise HTTPException(status_code=404, detail="Answer message not found")
         repository.audit(
             principal,
@@ -1205,9 +1452,7 @@ def create_app(
     def admin_metrics(principal: Principal = Depends(require_admin)) -> dict:
         return repository.admin_metrics(principal)
 
-    @app.get(
-        "/", response_class=HTMLResponse, response_model=None, include_in_schema=False
-    )
+    @app.get("/", response_class=HTMLResponse, response_model=None, include_in_schema=False)
     def index(request: Request) -> HTMLResponse | RedirectResponse:
         if resolved_settings.accounts_enabled and not resolve_account_session(
             request, resolved_settings
@@ -1222,11 +1467,19 @@ def create_app(
             "__ACCOUNT_MODE__", "true" if resolved_settings.accounts_enabled else "false"
         )
         html = html.replace(
-            "__SUPPORT_URL__", json.dumps(resolved_settings.support_url or "")
+            "__ACCOUNT_INVITES__",
+            "true" if resolved_settings.account_invitations_enabled else "false",
         )
         html = html.replace(
-            "__CHECKOUT_URL__", json.dumps(resolved_settings.checkout_url or "")
+            "__ACCOUNT_EXPORT__",
+            "true" if resolved_settings.account_export_enabled else "false",
         )
+        html = html.replace(
+            "__ACCOUNT_DELETE__",
+            "true" if resolved_settings.account_deletion_enabled else "false",
+        )
+        html = html.replace("__SUPPORT_URL__", json.dumps(resolved_settings.support_url or ""))
+        html = html.replace("__CHECKOUT_URL__", json.dumps(resolved_settings.checkout_url or ""))
         return HTMLResponse(html)
 
     return app

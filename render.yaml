@@ -27,6 +27,12 @@ services:
         value: "false"
       - key: EVIDENCEDESK_ACCOUNT_PASSWORD_RESET_ENABLED
         value: "false"
+      - key: EVIDENCEDESK_ACCOUNT_INVITATIONS_ENABLED
+        value: "false"
+      - key: EVIDENCEDESK_ACCOUNT_EXPORT_ENABLED
+        value: "false"
+      - key: EVIDENCEDESK_ACCOUNT_DELETION_ENABLED
+        value: "false"
       - key: EVIDENCEDESK_DB_PATH
         value: /tmp/evidencedesk/evidencedesk.db
       - key: EVIDENCEDESK_DOCUMENT_STORE_PATH
