@@ -85,7 +85,12 @@ from app.models import (
     WorkspaceOut,
     WorkspaceOwnershipTransferRequest,
 )
-from app.payments import InvalidPaymentWebhook, parse_lemonsqueezy_webhook
+from app.payments import (
+    InvalidPaymentWebhook,
+    build_pro_checkout_url,
+    parse_lemonsqueezy_webhook,
+    pro_entitlement_decision,
+)
 from app.pilot import (
     PILOT_COOKIE,
     access_page,
@@ -1036,6 +1041,24 @@ def create_app(
         )
         return response
 
+    @app.get("/v1/billing/checkout", include_in_schema=False)
+    def pro_billing_checkout(request: Request) -> RedirectResponse:
+        if not resolved_settings.payment_entitlements_enabled:
+            raise HTTPException(status_code=404, detail="Pro checkout is not configured")
+        session = required_account_session(request)
+        if session.role != "admin":
+            raise HTTPException(status_code=403, detail="Workspace administrator required")
+        if session.plan == "pro":
+            raise HTTPException(status_code=409, detail="This workspace already has Pro access")
+        assert resolved_settings.pro_checkout_url
+        assert resolved_settings.payment_webhook_secret
+        target = build_pro_checkout_url(
+            resolved_settings.pro_checkout_url,
+            session.workspace_id,
+            resolved_settings.payment_webhook_secret.get_secret_value(),
+        )
+        return RedirectResponse(target, status_code=303)
+
     @app.post("/v1/payments/webhook", include_in_schema=False)
     async def payment_webhook(request: Request) -> dict[str, bool]:
         configured_secret = resolved_settings.payment_webhook_secret
@@ -1052,17 +1075,29 @@ def create_app(
             )
         except InvalidPaymentWebhook as exc:
             raise HTTPException(status_code=401, detail="Invalid payment event") from exc
-        created = repository.record_payment_event(
-            event,
-            tenant_id=resolved_settings.pilot_tenant_id,
-        )
+        decision = None
+        if resolved_settings.payment_entitlements_enabled:
+            decision = pro_entitlement_decision(
+                event,
+                approved_variant_ids=resolved_settings.resolved_payment_pro_variant_ids(),
+                secret=configured_secret.get_secret_value(),
+            )
+        tenant_id = decision.workspace_id if decision else resolved_settings.pilot_tenant_id
+        created = repository.record_payment_event(event, tenant_id=tenant_id)
+        entitlement_updated = bool(decision) and repository.apply_workspace_entitlement(decision)
         logger.info(
-            "payment_event provider=lemonsqueezy event=%s stored=%s test_mode=%s",
+            "payment_event provider=lemonsqueezy event=%s stored=%s test_mode=%s entitlement_updated=%s",
             event.event_name,
             created,
             event.test_mode,
+            entitlement_updated,
         )
-        return {"accepted": True, "duplicate": not created}
+        return {
+            "accepted": True,
+            "duplicate": not created,
+            "entitlement_eligible": decision is not None,
+            "entitlement_updated": entitlement_updated,
+        }
 
     @app.get("/v1/capabilities", dependencies=[Depends(enforce_rate_limit)])
     def capabilities(_: Principal = Depends(authenticate_key)) -> dict[str, object]:
@@ -1677,6 +1712,10 @@ def create_app(
         )
         html = html.replace("__SUPPORT_URL__", json.dumps(resolved_settings.support_url or ""))
         html = html.replace("__CHECKOUT_URL__", json.dumps(resolved_settings.checkout_url or ""))
+        html = html.replace(
+            "__PRO_CHECKOUT_ENABLED__",
+            "true" if resolved_settings.payment_entitlements_enabled else "false",
+        )
         return HTMLResponse(html)
 
     return app

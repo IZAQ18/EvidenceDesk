@@ -11,7 +11,7 @@ from app.config import Classification
 from app.db import DatabaseLike
 from app.ingestion import ExtractedDocument, TextChunk, has_injection_language
 from app.models import Principal, RetrievalSummary
-from app.payments import PaymentEvent
+from app.payments import EntitlementDecision, PaymentEvent
 from app.retrieval import (
     STOP_WORDS,
     expanded_query_terms,
@@ -1189,4 +1189,77 @@ class Repository:
                     _now(),
                 ),
             )
+            return cursor.rowcount == 1
+
+    def apply_workspace_entitlement(
+        self, decision: EntitlementDecision, *, provider: str = "lemonsqueezy"
+    ) -> bool:
+        """Apply an already verified plan decision and ignore stale provider updates."""
+        now = _now()
+        with self.database.connect() as connection:
+            workspace = connection.execute(
+                "SELECT id FROM workspaces WHERE id = ?", (decision.workspace_id,)
+            ).fetchone()
+            if not workspace:
+                return False
+            cursor = connection.execute(
+                """INSERT INTO workspace_entitlements(
+                       workspace_id, provider, provider_id, variant_id, status, plan,
+                       provider_updated_at, updated_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(provider, provider_id) DO UPDATE SET
+                       variant_id=excluded.variant_id,
+                       status=excluded.status,
+                       plan=excluded.plan,
+                       provider_updated_at=excluded.provider_updated_at,
+                       updated_at=excluded.updated_at
+                   WHERE workspace_entitlements.workspace_id = excluded.workspace_id
+                     AND (workspace_entitlements.provider_updated_at = ''
+                      OR (excluded.provider_updated_at <> '' AND
+                          excluded.provider_updated_at > workspace_entitlements.provider_updated_at))""",
+                (
+                    decision.workspace_id,
+                    provider,
+                    decision.provider_id,
+                    decision.variant_id,
+                    decision.status,
+                    decision.plan,
+                    decision.provider_updated_at,
+                    now,
+                ),
+            )
+            entitlement = connection.execute(
+                """SELECT CASE WHEN COUNT(*) > 0 THEN 'pro' ELSE 'free' END plan
+                   FROM workspace_entitlements
+                   WHERE workspace_id = ? AND plan = 'pro'""",
+                (decision.workspace_id,),
+            ).fetchone()
+            assert entitlement is not None
+            connection.execute(
+                "UPDATE workspaces SET plan = ? WHERE id = ?",
+                (entitlement["plan"], decision.workspace_id),
+            )
+            if cursor.rowcount == 1:
+                connection.execute(
+                    """INSERT INTO audit_events(
+                           tenant_id, subject, event_type, entity_type, entity_id,
+                           detail_json, created_at
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        decision.workspace_id,
+                        "lemonsqueezy-webhook",
+                        "workspace_entitlement_updated",
+                        "workspace",
+                        decision.workspace_id,
+                        json.dumps(
+                            {
+                                "plan": decision.plan,
+                                "status": decision.status,
+                                "provider": provider,
+                            },
+                            separators=(",", ":"),
+                        ),
+                        now,
+                    ),
+                )
             return cursor.rowcount == 1

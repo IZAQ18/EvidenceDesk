@@ -19,7 +19,7 @@ A sensible first customer journey is:
 | Tier | Validation price | Purpose | Status |
 | --- | --- | --- | --- |
 | Free pilot | **$0** | Let reviewers understand the product with synthetic examples. | Available as a protected demonstration; no durable service promise. |
-| Pro | **$9/month** | Private individual library, OCR and citation-first questions, exports, and account controls. | Planned launch hypothesis; checkout and paid entitlements are inactive. |
+| Pro | **$9/month** | Private individual library, OCR and citation-first questions, exports, and account controls. | Pricing hypothesis; guarded subscription entitlements exist in code but remain disabled pending provider and deployment acceptance. |
 | Founding team pilot | **$149 one time** | A 14-day guided evaluation for up to five reviewers, approved non-sensitive documents, and a written readiness report. | Planned validation offer; qualify the team and document scope before accepting payment. |
 
 Do not advertise exact quotas until the application measures usage and actually enforces them.
@@ -44,14 +44,16 @@ Server-side entitlement and usage checks
 Billing portal, cancellation, and audit events
 ```
 
-EvidenceDesk v0.7 implements signed Lemon Squeezy-compatible webhook verification, idempotent minimal event storage, and an admin-only notification surface. It intentionally does not store card/bank details and does not activate plan entitlements.
+EvidenceDesk now includes a disabled-by-default Lemon Squeezy Pro foundation. An authenticated workspace administrator receives a hosted checkout URL carrying a server-generated workspace binding. A signed webhook can update only that workspace, only for an approved variant, only outside provider test mode, and only when the provider event is newer than stored state. Minimal payment notifications and entitlement state are stored; card and bank details are not.
+
+This code is not a claim that billing is live. The protected Render pilot still uses shared pilot access and ephemeral storage, so it cannot enable subscription entitlements. The one-time Team pilot remains a manually qualified service offer rather than an automatically granted plan.
 
 Before enabling live checkout, still add:
 
-- a durable PostgreSQL database and object storage;
-- user accounts and tenant ownership;
-- provider-signature verification and idempotent webhook handling;
-- server-side plan entitlements and usage counters;
+- provision and acceptance-test the existing PostgreSQL and private object-storage adapters;
+- deploy and acceptance-test the existing account and tenant ownership flows;
+- configure the approved provider product, variant, webhook, customer portal, and live test purchase;
+- enforce plan-specific document/model allowances and display usage to customers;
 - terms, privacy notice, refund/cancellation policy, and support contact;
 - backups, monitoring, abuse limits, and a data-deletion process;
 - local legal and tax advice appropriate to the developer's business.
@@ -68,7 +70,7 @@ Create a written scope, success measures, data rules, duration, and fixed price.
 
 ### Phase 3 — activate subscriptions
 
-After account approval and the backend billing controls exist, connect a merchant-of-record checkout, webhook, customer portal, and entitlements. Start with one plan and one allowance model. Add more tiers only when customer behavior supports them.
+After provider approval, deploy durable account mode, follow the [billing entitlement runbook](billing-entitlements.md), connect the provider customer portal, and enforce one clear Pro allowance model. Add more tiers only when customer behavior supports them.
 
 ### Phase 4 — team readiness
 

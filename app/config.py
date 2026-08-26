@@ -120,7 +120,10 @@ class Settings(BaseSettings):
     public_base_url: str | None = None
     support_url: str | None = None
     checkout_url: str | None = None
+    pro_checkout_url: str | None = None
     payment_webhook_secret: SecretStr | None = None
+    payment_entitlements_enabled: bool = False
+    payment_pro_variant_ids: str = Field(default="", max_length=1_000)
     allowed_hosts: str = "localhost,127.0.0.1,testserver,*.onrender.com,*.koyeb.app"
 
     @model_validator(mode="after")
@@ -136,7 +139,7 @@ class Settings(BaseSettings):
             return json.loads(value)
         return value
 
-    @field_validator("support_url", "checkout_url")
+    @field_validator("support_url", "checkout_url", "pro_checkout_url")
     @classmethod
     def validate_support_url(cls, value: str | None) -> str | None:
         if value is None or not value.strip():
@@ -145,6 +148,30 @@ class Settings(BaseSettings):
         if not normalized.startswith("https://"):
             raise ValueError("Payment and support URLs must use HTTPS")
         return normalized
+
+    def resolved_payment_pro_variant_ids(self) -> set[str]:
+        return {
+            item.strip()
+            for item in self.payment_pro_variant_ids.split(",")
+            if item.strip().isdigit()
+        }
+
+    @model_validator(mode="after")
+    def validate_payment_entitlements(self) -> Settings:
+        if not self.payment_entitlements_enabled:
+            return self
+        if not self.accounts_enabled:
+            raise ValueError("Payment entitlements require account authentication")
+        if self.payment_webhook_secret is None:
+            raise ValueError("Payment entitlements require a webhook secret")
+        if self.pro_checkout_url is None:
+            raise ValueError("Payment entitlements require a Pro checkout URL")
+        configured_variants = [
+            item.strip() for item in self.payment_pro_variant_ids.split(",") if item.strip()
+        ]
+        if not configured_variants or any(not item.isdigit() for item in configured_variants):
+            raise ValueError("Payment entitlements require approved Pro variant IDs")
+        return self
 
     @field_validator("model_base_url")
     @classmethod

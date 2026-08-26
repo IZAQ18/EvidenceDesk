@@ -47,7 +47,7 @@ This is an intentionally honest portfolio MVP. It runs locally and demonstrates 
 - Aurora, Cobalt, and Ember accent palettes, interactive pointer light, spectrum navigation, and more expressive verified-evidence states.
 - An IZAQ portrait signature across the access gate, cinematic intro, header, and product rail.
 - A clearly labeled freemium product preview with Free, planned Pro, a founding Team pilot, and provider-hosted checkout/support links.
-- Lemon Squeezy-compatible HMAC webhook verification, idempotent payment-event storage, masked customer hints, and admin-only payment notifications. Paid feature entitlements are not active yet.
+- A disabled-by-default Lemon Squeezy Pro foundation: account-bound hosted checkout, HMAC webhook verification, approved-variant and live-mode checks, ordered/idempotent entitlement updates, masked customer hints, and admin-only payment notifications. Live billing is not configured or claimed.
 - A public `/about` product page for LinkedIn visitors and payment-provider review, while the document workspace remains behind the private pilot gate.
 - A larger IZAQ support presentation with consented MCB and NayaPay recipient IBANs plus a clearly labeled 40% developer charity pledge.
 - Docker, GitHub Actions CI, evaluation/security tests, and a concrete path to standard AWS.
@@ -274,7 +274,7 @@ See the [Render pilot guide](docs/render-pilot.md) and [code-protection notes](d
 
 ### Freemium and revenue preview
 
-The **Plans** view shows the intended customer journey without pretending that billing is finished. The current Free pilot is a protected, synthetic-data demonstration. Pro remains a roadmap concept. A founding Team pilot can open an approved hosted checkout, but payment still does not automatically activate application entitlements.
+The **Plans** view shows the intended customer journey without pretending that billing is finished. The current Free pilot is a protected, synthetic-data demonstration. The repository now contains a disabled-by-default Pro subscription foundation for account mode; the deployed Render pilot does not enable it. A founding Team pilot can open an approved hosted checkout, but its one-time payment does not automatically activate an application plan.
 
 If a payment or creator-support provider approves your account, configure its hosted HTTPS link for product checkout. The public support panel also displays developer-authorized direct-transfer recipient details; payer credentials are never collected by EvidenceDesk:
 
@@ -282,9 +282,13 @@ If a payment or creator-support provider approves your account, configure its ho
 EVIDENCEDESK_CHECKOUT_URL=https://your-store.example/checkout/buy/your-product
 EVIDENCEDESK_SUPPORT_URL=https://your-provider.example/your-support-page
 EVIDENCEDESK_PAYMENT_WEBHOOK_SECRET=generated-in-the-provider-dashboard
+# Only for a durable account-mode deployment after provider acceptance and test checkout:
+EVIDENCEDESK_PRO_CHECKOUT_URL=https://your-store.lemonsqueezy.com/checkout/buy/your-pro-variant
+EVIDENCEDESK_PAYMENT_PRO_VARIANT_IDS=123456
+EVIDENCEDESK_PAYMENT_ENTITLEMENTS_ENABLED=true
 ```
 
-The webhook endpoint is `/v1/payments/webhook`. It verifies the provider signature before storing a minimal event and never receives card or MCB account details. The safest first commercial offer is a **founding team pilot**: one organization pays for controlled onboarding, an agreed synthetic/non-sensitive evaluation, and a clear success report. Subscription checkout should follow only after durable storage, accounts, usage metering, entitlements, terms, privacy, and refunds exist. See the [monetization plan](docs/monetization.md).
+The webhook endpoint is `/v1/payments/webhook`. It verifies the provider signature before storing a minimal event and never receives card or MCB account details. When the guarded Pro integration is explicitly enabled, only a live approved subscription carrying a valid server-generated workspace binding can update that workspace's plan. Stale, test-mode, unknown-variant, malformed, and unbound events cannot grant access. This is an entitlement foundation, not complete billing: provider acceptance, a customer portal, enforced product allowances, policies, refunds, durable deployment, and live acceptance remain gates. See the [billing runbook](docs/billing-entitlements.md) and [monetization plan](docs/monetization.md).
 
 The public marketing and provider-review URL is `/about`. It describes the product, plans, honest limitations, privacy boundary, and payment/refund status without exposing the protected workspace. Use the full deployed `https://...onrender.com/about` address in LinkedIn and payment-provider onboarding.
 

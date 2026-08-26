@@ -15,7 +15,8 @@ EvidenceDesk optimizes for traceable answers, access decisions before retrieval,
 7. **Retrieval:** first applies tenant, classification, lifecycle, and explicit document scope in SQL. It then combines database full-text results with a bounded authorized candidate pool scored by transparent local semantic feature vectors. Reciprocal rank fusion and a question-aware passage reranker reward direct term coverage, domain concepts, metadata, and answer shapes such as quantities or deadlines. SQLite uses FTS5; PostgreSQL uses a GIN-backed `to_tsvector` index and native web-search queries.
 8. **Bounded answer workflow:** selects supported source passages, creates structured page citations, labels evidence quality, and refuses when support is insufficient. An optional server-managed model can organize only the selected authorized excerpts. Strict output, citation, number, negation, and term-support checks run before acceptance; every failure uses the local extractive answer. The free pilot keeps this gateway disabled.
 9. **Usage-control layer:** atomically reserves a daily request/token/cost budget before a provider call and records only provider/model metadata, a one-way subject hash, counts, estimated cost, latency, status, and fallback reason.
-10. **Browser workspace:** combines account-aware onboarding, conversation history, explicit document scope, evidence inspection, original preview, library lifecycle tools, feedback, reports, and admin-only operational signals.
+10. **Billing-entitlement boundary:** optional account-mode Pro checkout adds a server-generated workspace binding to hosted checkout custom data. Signed subscription webhooks must also match a live approved variant, supported lifecycle event/status, and a newer provider timestamp. Multiple subscription records are evaluated together so a late event from an old subscription cannot revoke a newer active subscription. The boundary is disabled by default.
+11. **Browser workspace:** combines account-aware onboarding, conversation history, explicit document scope, evidence inspection, original preview, library lifecycle tools, feedback, reports, and admin-only operational signals.
 
 ## Why these decisions
 
@@ -47,6 +48,8 @@ EvidenceDesk optimizes for traceable answers, access decisions before retrieval,
   emailed verification/reset token.
 - `workspace_invitations`: workspace, recipient, bounded role/clearances, inviter, status, expiry,
   and a one-way token hash; never the emailed invitation token.
+- `workspace_entitlements`: minimal provider subscription ID, approved variant, lifecycle status,
+  derived plan, provider timestamp, and workspace. It contains no card or bank details.
 
 Archive removes a document from normal retrieval without destroying it. Permanent delete removes metadata, pages, chunks, index rows, and the original file. Superseding a version marks the older record as superseded.
 
@@ -81,3 +84,6 @@ Archive removes a document from normal retrieval without destroying it. Permanen
 - The optional model gateway has strict mechanical support checks, but those checks are not a
   semantic-entailment proof. Customer-specific evaluation, provider privacy review, a provider-side
   budget, and human review for consequential use remain required.
+- The disabled-by-default Pro entitlement foundation is locally tested, but live provider/store
+  acceptance, customer portal, plan allowance enforcement, reconciliation, refund/cancellation
+  operations, durable deployment, and legal/tax review remain required before charging customers.

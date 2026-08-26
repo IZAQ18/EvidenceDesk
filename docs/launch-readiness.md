@@ -18,7 +18,7 @@ the organization has not supplied enough information.
 | Ingestion | Async processing, malware scan, progress, resilient OCR and table handling | Quarantine/promotion, private-clamd adapter, bounded parser subprocess, standalone worker command, dead-letter visibility, progress, retry, integrity, and lease recovery implemented and tested. Live private-scanner acceptance and advanced table extraction pending |
 | Answer quality | Organization-specific gold set, >=95% retrieval success, >=98% valid citations | Hybrid local semantic retrieval, reranking, diagnostics, and an 8-case synthetic regression benchmark implemented; customer-specific held-out evaluation pending |
 | Customer AI | Server-managed provider, quotas, cost controls, no customer key required | Gateway, fallbacks, usage controls, and fake-provider tests implemented; provider/privacy acceptance and live configuration pending |
-| Billing | Hosted checkout, verified webhooks, entitlements, portal, cancellation, refunds | Verified event intake exists; entitlements pending |
+| Billing | Hosted checkout, verified webhooks, entitlements, portal, cancellation, refunds | Disabled-by-default, account-bound Pro checkout and ordered server-side entitlement state implemented and locally tested; live provider acceptance, allowance enforcement, portal, policies, refund flow, and durable deployment pending |
 | User control | Export, document deletion, conversation deletion, complete account deletion | Bounded workspace export, guarded account deletion, member removal, safe departure, and ownership transfer implemented; operational cleanup/retention acceptance pending |
 | Trust | Terms, privacy, retention, subprocessors, support and honest limitations | Pilot notices exist; commercial documents pending |
 | Operations | Monitoring, error tracking, alerts, backups, incident procedure | Pending |
@@ -31,7 +31,7 @@ the organization has not supplied enough information.
 3. Semantic retrieval, reranking, grounded model synthesis, and expanded evaluation.
 4. Server-managed model usage, quotas, and cost controls.
 5. Email-provider/domain acceptance, invitations, deletion, and organization controls.
-6. Lemon Squeezy subscriptions and server-side entitlements.
+6. Complete Lemon Squeezy live acceptance, customer portal, allowance enforcement, and billing operations around the guarded Pro entitlement foundation.
 7. Policy Audit: contradictions, missing dates, version differences, and evidence gaps.
 8. Monitoring, backups, legal pages, accessibility, performance, and private acceptance.
 9. Public launch only after every blocking gate passes.

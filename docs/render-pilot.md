@@ -22,7 +22,7 @@ EVIDENCEDESK_SUPPORT_URL=https://your-provider.example/your-support-page
 EVIDENCEDESK_PAYMENT_WEBHOOK_SECRET=generated-in-the-provider-dashboard
 ```
 
-Configure the provider callback as `https://YOUR-SERVICE.onrender.com/v1/payments/webhook`. EvidenceDesk verifies the `X-Signature`, stores a minimal idempotent event, masks the customer email, and displays it to admins under **Insights → Payment notifications**. The webhook is a notification mechanism only; it does not yet grant paid product access.
+Configure the provider callback as `https://YOUR-SERVICE.onrender.com/v1/payments/webhook`. EvidenceDesk verifies the `X-Signature`, stores a minimal idempotent event, masks the customer email, and displays it to admins under **Insights → Payment notifications**. Leave `EVIDENCEDESK_PAYMENT_ENTITLEMENTS_ENABLED=false` on this shared, ephemeral pilot. Automated Pro access requires durable account mode and the separate [billing entitlement runbook](billing-entitlements.md).
 
 Render's free ephemeral SQLite database is not a financial ledger. The payment provider dashboard remains the source of truth, and live commercial launch should move payment-event state to durable PostgreSQL before relying on the in-app panel.
 

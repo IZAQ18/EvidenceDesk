@@ -5,6 +5,7 @@ __pycache__/
 .pytest-tmp/
 .pytest-evidencedesk-*/
 .pytest-*/
+.pytest_tmp*/
 .test-tmp-*/
 .ruff_cache/
 .visual-acceptance/

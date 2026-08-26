@@ -165,6 +165,20 @@ CREATE TABLE IF NOT EXISTS workspaces (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS workspace_entitlements (
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    provider_id TEXT NOT NULL,
+    variant_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    plan TEXT NOT NULL CHECK (plan IN ('free','pro')),
+    provider_updated_at TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(provider, provider_id)
+);
+CREATE INDEX IF NOT EXISTS idx_workspace_entitlements_workspace
+    ON workspace_entitlements(workspace_id, plan);
+
 CREATE TABLE IF NOT EXISTS workspace_members (
     workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -593,6 +607,24 @@ POSTGRES_MIGRATIONS: tuple[tuple[int, tuple[str, ...]], ...] = (
             )""",
             """CREATE INDEX IF NOT EXISTS idx_pilot_reviews_tenant
                ON pilot_reviews(tenant_id, created_at DESC)""",
+        ),
+    ),
+    (
+        8,
+        (
+            """CREATE TABLE IF NOT EXISTS workspace_entitlements (
+                workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+                provider TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                variant_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                plan TEXT NOT NULL CHECK (plan IN ('free','pro')),
+                provider_updated_at TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(provider, provider_id)
+            )""",
+            """CREATE INDEX IF NOT EXISTS idx_workspace_entitlements_workspace
+               ON workspace_entitlements(workspace_id, plan)""",
         ),
     ),
 )
