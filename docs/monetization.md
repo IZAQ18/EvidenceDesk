@@ -16,13 +16,15 @@ A sensible first customer journey is:
 
 ## Freemium hypothesis
 
-| Tier | Purpose | Status |
-| --- | --- | --- |
-| Free pilot | Let reviewers understand the product with synthetic examples. | Available as a protected demonstration; no durable service promise. |
-| Pro | Private individual library, higher OCR/question allowances, exports, and account controls. | Planned; price and limits need user research. |
-| Team | Shared workspace, roles, managed storage, onboarding, and evaluation. | Planned; best candidate for a paid founding pilot. |
+| Tier | Validation price | Purpose | Status |
+| --- | --- | --- | --- |
+| Free pilot | **$0** | Let reviewers understand the product with synthetic examples. | Available as a protected demonstration; no durable service promise. |
+| Pro | **$9/month** | Private individual library, OCR and citation-first questions, exports, and account controls. | Planned launch hypothesis; checkout and paid entitlements are inactive. |
+| Founding team pilot | **$149 one time** | A 14-day guided evaluation for up to five reviewers, approved non-sensitive documents, and a written readiness report. | Planned validation offer; qualify the team and document scope before accepting payment. |
 
 Do not advertise exact quotas until the application measures usage and actually enforces them.
+
+The $9 Pro hypothesis is intentionally below current entry prices published by comparable document-Q&A products: [Humata lists Expert at $9.99/month](https://www.humata.ai/pricing), while [AskYourPDF lists annual-billing Premium and Pro plans at $11.99 and $14.99 per month](https://askyourpdf.com/blog/askyourpdf-research-assistant). This is a benchmark, not proof of willingness to pay. Validate it with real pilot interviews and retention data before treating it as final.
 
 ## Payment safety
 

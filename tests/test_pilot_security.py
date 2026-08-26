@@ -36,6 +36,9 @@ def test_protected_pilot_gate_and_seeded_content(tmp_path):
         assert "Muhammad Qasim Ayub" in public_site.text
         assert "PK83 NAYA 1234 5030 6196 1996" in public_site.text
         assert "passed the standard IBAN checksum" in public_site.text
+        assert "$9" in public_site.text
+        assert "$149" in public_site.text
+        assert "Validation pricing only" in public_site.text
         assert public_site.headers["x-robots-tag"] == "index, follow"
         assert "public" in public_site.headers["cache-control"]
 

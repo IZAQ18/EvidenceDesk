@@ -128,8 +128,18 @@ def test_workspace_exposes_guided_pilot_without_requesting_contact_details(clien
     page = client.get("/")
     assert page.status_code == 200
     assert 'id="pilotView"' in page.text
+    assert '<button class="tab active" data-view="pilot">Pilot ' in page.text
+    assert "(How to use EvidenceDesk)" in page.text
+    assert 'id="workspaceView" class="view workspace hidden"' in page.text
     assert 'id="pilotReview"' in page.text
     assert "Five-minute evidence test" in page.text
+    assert 'id="supportNudge"' in page.text
+    assert "Swipe left or right to dismiss" in page.text
+    assert "registerMeaningfulUse()" in page.text
+    assert "body{zoom:1.25}" in page.text
+    assert "||'cobalt'" in page.text
+    assert "$9" in page.text
+    assert "$149" in page.text
     assert 'name="email"' not in page.text
 
 
