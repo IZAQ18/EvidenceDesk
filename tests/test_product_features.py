@@ -90,6 +90,49 @@ def test_conversation_feedback_and_report_workflow(client):
     assert "Where should employees" in report.text
 
 
+def test_anonymous_pilot_scorecard_is_validated_and_aggregated(client):
+    payload = {
+        "reviewer_context": "people_ops",
+        "ease_score": 4,
+        "trust_score": 5,
+        "usefulness_score": 4,
+        "completed_tasks": 5,
+        "would_return": "yes",
+        "most_valuable": "Opening the exact source passage.",
+        "improvement": "Make the first safe-refusal example more obvious.",
+    }
+    unauthorized = client.post("/v1/pilot-reviews", json=payload)
+    assert unauthorized.status_code == 401
+
+    created = client.post("/v1/pilot-reviews", headers=auth(), json=payload)
+    assert created.status_code == 201
+    assert created.json()["review_id"]
+
+    invalid = client.post(
+        "/v1/pilot-reviews",
+        headers=auth(),
+        json={**payload, "trust_score": 6},
+    )
+    assert invalid.status_code == 422
+
+    metrics = client.get("/v1/admin/metrics", headers=auth()).json()["pilot_reviews"]
+    assert metrics["review_count"] == 1
+    assert metrics["avg_ease_score"] == 4
+    assert metrics["avg_trust_score"] == 5
+    assert metrics["avg_usefulness_score"] == 4
+    assert metrics["avg_completed_tasks"] == 5
+    assert metrics["would_return_yes"] == 1
+
+
+def test_workspace_exposes_guided_pilot_without_requesting_contact_details(client):
+    page = client.get("/")
+    assert page.status_code == 200
+    assert 'id="pilotView"' in page.text
+    assert 'id="pilotReview"' in page.text
+    assert "Five-minute evidence test" in page.text
+    assert 'name="email"' not in page.text
+
+
 def test_collections_versions_supersession_bulk_and_metrics(client):
     first = client.post(
         "/v1/documents",
@@ -159,6 +202,22 @@ def test_controlled_query_expansion_finds_common_synonym(client):
     assert result["grounded"] is True
     assert "eighteen paid days" in result["answer"].lower()
     assert result["evidence_quality"] in {"strong", "partial"}
+
+
+def test_guided_pilot_unrelated_question_produces_safe_refusal(client):
+    ingest(
+        client,
+        "Employees receive annual leave and managers approve requests based on team coverage.",
+        name="fictional-handbook.txt",
+    )
+    result = client.post(
+        "/v1/answers",
+        headers=auth(),
+        json={"question": "Which cryptocurrency tokens receive quarterly dividends?"},
+    ).json()
+    assert result["grounded"] is False
+    assert result["citations"] == []
+    assert result["evidence_quality"] == "insufficient"
 
 
 def test_multi_part_question_selects_multiple_sentences_from_one_chunk(client):

@@ -73,6 +73,7 @@ from app.models import (
     FeedbackRequest,
     IngestionJobOut,
     MessageOut,
+    PilotReviewRequest,
     Principal,
     WorkspaceInvitationAcceptRequest,
     WorkspaceInvitationOut,
@@ -1571,6 +1572,36 @@ def create_app(
             {"category": payload.category},
         )
         return {"status": "recorded"}
+
+    @app.post("/v1/pilot-reviews", status_code=201)
+    def pilot_review(
+        payload: PilotReviewRequest, principal: Principal = Depends(authenticate_key)
+    ) -> dict[str, str]:
+        most_valuable = _clean_optional(payload.most_valuable, 300)
+        improvement = _clean_optional(payload.improvement, 500)
+        review_id = repository.add_pilot_review(
+            principal,
+            reviewer_context=payload.reviewer_context,
+            ease_score=payload.ease_score,
+            trust_score=payload.trust_score,
+            usefulness_score=payload.usefulness_score,
+            completed_tasks=payload.completed_tasks,
+            would_return=payload.would_return,
+            most_valuable=most_valuable,
+            improvement=improvement,
+        )
+        repository.audit(
+            principal,
+            "pilot_review_recorded",
+            "pilot_review",
+            review_id,
+            {
+                "reviewer_context": payload.reviewer_context,
+                "completed_tasks": payload.completed_tasks,
+                "would_return": payload.would_return,
+            },
+        )
+        return {"status": "recorded", "review_id": review_id}
 
     @app.get("/v1/messages/{message_id}/report", response_class=PlainTextResponse)
     def answer_report(

@@ -351,3 +351,16 @@ class FeedbackRequest(BaseModel):
     message_id: str
     category: Literal["helpful", "unsupported", "wrong_source", "missing_information", "ocr_error"]
     comment: str | None = Field(default=None, max_length=500)
+
+
+class PilotReviewRequest(BaseModel):
+    reviewer_context: Literal[
+        "general", "people_ops", "operations", "legal_compliance", "technology", "other"
+    ] = "general"
+    ease_score: int = Field(ge=1, le=5)
+    trust_score: int = Field(ge=1, le=5)
+    usefulness_score: int = Field(ge=1, le=5)
+    completed_tasks: int = Field(default=0, ge=0, le=5)
+    would_return: Literal["yes", "maybe", "no"]
+    most_valuable: str | None = Field(default=None, max_length=300)
+    improvement: str | None = Field(default=None, max_length=500)

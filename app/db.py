@@ -100,6 +100,23 @@ CREATE TABLE IF NOT EXISTS feedback (
     UNIQUE(subject, message_id)
 );
 
+CREATE TABLE IF NOT EXISTS pilot_reviews (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    reviewer_context TEXT NOT NULL,
+    ease_score INTEGER NOT NULL CHECK (ease_score BETWEEN 1 AND 5),
+    trust_score INTEGER NOT NULL CHECK (trust_score BETWEEN 1 AND 5),
+    usefulness_score INTEGER NOT NULL CHECK (usefulness_score BETWEEN 1 AND 5),
+    completed_tasks INTEGER NOT NULL CHECK (completed_tasks BETWEEN 0 AND 5),
+    would_return TEXT NOT NULL CHECK (would_return IN ('yes','maybe','no')),
+    most_valuable TEXT,
+    improvement TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pilot_reviews_tenant
+    ON pilot_reviews(tenant_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS audit_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     tenant_id TEXT NOT NULL,
@@ -555,6 +572,27 @@ POSTGRES_MIGRATIONS: tuple[tuple[int, tuple[str, ...]], ...] = (
             )""",
             """CREATE INDEX IF NOT EXISTS idx_workspace_invitations_lookup
                ON workspace_invitations(workspace_id, email, status, expires_at)""",
+        ),
+    ),
+    (
+        7,
+        (
+            """CREATE TABLE IF NOT EXISTS pilot_reviews (
+                id TEXT PRIMARY KEY,
+                tenant_id TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                reviewer_context TEXT NOT NULL,
+                ease_score INTEGER NOT NULL CHECK (ease_score BETWEEN 1 AND 5),
+                trust_score INTEGER NOT NULL CHECK (trust_score BETWEEN 1 AND 5),
+                usefulness_score INTEGER NOT NULL CHECK (usefulness_score BETWEEN 1 AND 5),
+                completed_tasks INTEGER NOT NULL CHECK (completed_tasks BETWEEN 0 AND 5),
+                would_return TEXT NOT NULL CHECK (would_return IN ('yes','maybe','no')),
+                most_valuable TEXT,
+                improvement TEXT,
+                created_at TEXT NOT NULL
+            )""",
+            """CREATE INDEX IF NOT EXISTS idx_pilot_reviews_tenant
+               ON pilot_reviews(tenant_id, created_at DESC)""",
         ),
     ),
 )

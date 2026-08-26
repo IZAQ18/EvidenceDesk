@@ -914,6 +914,9 @@ class AccountStore:
                 )
                 connection.execute("DELETE FROM feedback WHERE tenant_id = ?", (workspace_id,))
                 connection.execute(
+                    "DELETE FROM pilot_reviews WHERE tenant_id = ?", (workspace_id,)
+                )
+                connection.execute(
                     "DELETE FROM answer_diagnostics WHERE tenant_id = ?", (workspace_id,)
                 )
                 connection.execute(

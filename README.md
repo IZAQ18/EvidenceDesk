@@ -24,7 +24,8 @@ This is an intentionally honest portfolio MVP. It runs locally and demonstrates 
 - Atomic daily request, token, and estimated-cost reservations plus a text-free model usage ledger
   and admin metrics. The protected free pilot keeps this provider gateway disabled.
 - Explicit document scope, collections, versions, effective/expiry dates, supersession, archive/restore, and bulk actions.
-- Persistent conversations, follow-up questions, per-answer feedback, and Markdown report export.
+- Persistent conversations, follow-up questions, per-answer feedback, Markdown report export, and
+  a built-in five-minute pilot walkthrough with an anonymous product scorecard.
 - Tenant and classification filtering before retrieval; role checks for administration; ownership checks for conversation data.
 - API-key authentication for local use plus an optional standards-based OIDC/JWT validation adapter.
 - An opt-in account foundation with scrypt password hashing, database-backed revocable sessions,
@@ -75,7 +76,7 @@ The agent-like workflow is deliberately bounded. Hybrid retrieval, passage reran
 synthesis, and citation verification add value; open-ended tools and uncontrolled loops do not.
 SQLite FTS5 keeps the local demo portable. The local semantic encoder uses transparent sparse
 policy features rather than a pretrained neural embedding model. See [architecture](docs/architecture.md),
-[evaluation](docs/evaluation.md), [delivery plan](docs/delivery-plan.md), [threat model](docs/threat-model.md),
+[evaluation](docs/evaluation.md), [pilot validation](docs/pilot-validation.md), [delivery plan](docs/delivery-plan.md), [threat model](docs/threat-model.md),
 [AWS path](docs/aws-deployment.md), and the [transformation report](docs/transformation-report.md).
 
 The optional model gateway is server-managed and fail-safe; it is not an autonomous agent. See the

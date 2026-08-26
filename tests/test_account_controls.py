@@ -429,6 +429,20 @@ def test_workspace_export_excludes_secrets_and_deletion_cleans_storage(tmp_path)
         original_path = settings.document_store_path / reference.removeprefix("local:")
         assert original_path.is_file()
 
+        review = client.post(
+            "/v1/pilot-reviews",
+            headers={"X-CSRF-Token": owner["csrf_token"]},
+            json={
+                "reviewer_context": "general",
+                "ease_score": 5,
+                "trust_score": 5,
+                "usefulness_score": 4,
+                "completed_tasks": 5,
+                "would_return": "yes",
+            },
+        )
+        assert review.status_code == 201, review.text
+
         exported = client.post("/v1/account/export", headers={"X-CSRF-Token": owner["csrf_token"]})
         assert exported.status_code == 200, exported.text
         assert exported.headers["content-type"] == "application/zip"
@@ -440,6 +454,7 @@ def test_workspace_export_excludes_secrets_and_deletion_cleans_storage(tmp_path)
             manifest = json.loads(manifest_text)
         assert manifest["scope"] == "complete_current_workspace"
         assert manifest["documents"][0]["has_original"] is True
+        assert len(manifest["pilot_reviews"]) == 1
         assert "password_hash" not in manifest_text
         assert "token_hash" not in manifest_text
         assert "storage_path" not in manifest_text
@@ -461,6 +476,7 @@ def test_workspace_export_excludes_secrets_and_deletion_cleans_storage(tmp_path)
         with app.state.repository.database.connect() as connection:
             assert connection.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
             assert connection.execute("SELECT COUNT(*) FROM documents").fetchone()[0] == 0
+            assert connection.execute("SELECT COUNT(*) FROM pilot_reviews").fetchone()[0] == 0
 
 
 def test_account_panel_exposes_member_ownership_and_leave_controls(tmp_path):

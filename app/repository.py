@@ -829,6 +829,44 @@ class Repository:
             )
             return True
 
+    def add_pilot_review(
+        self,
+        principal: Principal,
+        *,
+        reviewer_context: str,
+        ease_score: int,
+        trust_score: int,
+        usefulness_score: int,
+        completed_tasks: int,
+        would_return: str,
+        most_valuable: str | None,
+        improvement: str | None,
+    ) -> str:
+        review_id = str(uuid4())
+        with self.database.connect() as connection:
+            connection.execute(
+                """INSERT INTO pilot_reviews
+                   (id, tenant_id, subject, reviewer_context, ease_score, trust_score,
+                    usefulness_score, completed_tasks, would_return, most_valuable,
+                    improvement, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    review_id,
+                    principal.tenant_id,
+                    principal.subject,
+                    reviewer_context,
+                    ease_score,
+                    trust_score,
+                    usefulness_score,
+                    completed_tasks,
+                    would_return,
+                    most_valuable,
+                    improvement,
+                    _now(),
+                ),
+            )
+        return review_id
+
     def report_data(self, message_id: str, principal: Principal) -> dict | None:
         with self.database.connect() as connection:
             assistant = connection.execute(
@@ -1005,6 +1043,21 @@ class Repository:
                    WHERE tenant_id = ? GROUP BY category""",
                 (principal.tenant_id,),
             ).fetchall()
+            pilot_reviews = connection.execute(
+                """SELECT COUNT(*) review_count,
+                          COALESCE(AVG(ease_score), 0) avg_ease_score,
+                          COALESCE(AVG(trust_score), 0) avg_trust_score,
+                          COALESCE(AVG(usefulness_score), 0) avg_usefulness_score,
+                          COALESCE(AVG(completed_tasks), 0) avg_completed_tasks,
+                          COALESCE(SUM(CASE WHEN would_return='yes' THEN 1 ELSE 0 END), 0)
+                              would_return_yes,
+                          COALESCE(SUM(CASE WHEN would_return='maybe' THEN 1 ELSE 0 END), 0)
+                              would_return_maybe,
+                          COALESCE(SUM(CASE WHEN would_return='no' THEN 1 ELSE 0 END), 0)
+                              would_return_no
+                   FROM pilot_reviews WHERE tenant_id = ?""",
+                (principal.tenant_id,),
+            ).fetchone()
             recent_audit = connection.execute(
                 """SELECT event_type, entity_type, entity_id, detail_json, created_at
                    FROM audit_events WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 25""",
@@ -1069,6 +1122,7 @@ class Repository:
             "documents": dict(documents),
             "answers": dict(answers),
             "feedback": {row["category"]: row["count"] for row in feedback_rows},
+            "pilot_reviews": dict(pilot_reviews),
             "retrieval": dict(retrieval),
             "model_usage": {
                 **dict(model_usage),

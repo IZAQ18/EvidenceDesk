@@ -121,6 +121,9 @@ def build_workspace_export(
             "feedback": _rows(
                 connection, "SELECT * FROM feedback WHERE tenant_id = ?", (tenant_id,)
             ),
+            "pilot_reviews": _rows(
+                connection, "SELECT * FROM pilot_reviews WHERE tenant_id = ?", (tenant_id,)
+            ),
             "audit_events": _rows(
                 connection, "SELECT * FROM audit_events WHERE tenant_id = ?", (tenant_id,)
             ),

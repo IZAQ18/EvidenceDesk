@@ -112,7 +112,7 @@ def test_postgres_accounts_ingestion_retrieval_and_tenant_isolation(tmp_path):
             versions = connection.execute(
                 "SELECT version FROM schema_migrations ORDER BY version"
             ).fetchall()
-        assert [row["version"] for row in versions] == [1, 2, 3, 4, 5, 6]
+        assert [row["version"] for row in versions] == [1, 2, 3, 4, 5, 6, 7]
 
         first = _register(client, "FIRST@example.com", "First Team")
         uploaded = client.post(

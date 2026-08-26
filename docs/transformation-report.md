@@ -47,6 +47,8 @@ accounts, real users, or operational acceptance.
 ### Delivery and recovery
 
 - Docker, private GitHub repository, CI lint/test/coverage/container gates, and Render pilot.
+- A browser-tracked five-task pilot walkthrough, anonymous scorecard, tenant-scoped storage,
+  aggregate administrator metrics, export coverage, and deletion coverage for low-cost validation.
 - Standard commercial AWS data-plane CloudFormation for private KMS/S3 and RDS PostgreSQL; explicitly
   not GovCloud and not claimed as applied production infrastructure.
 - Guarded SQLite/local-to-PostgreSQL/S3 migration tooling.
