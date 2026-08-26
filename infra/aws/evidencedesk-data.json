@@ -116,11 +116,18 @@
         },
         "VersioningConfiguration": {"Status": "Enabled"},
         "LifecycleConfiguration": {
-          "Rules": [{
-            "Id": "ExpireOldNoncurrentVersions",
-            "Status": "Enabled",
-            "NoncurrentVersionExpiration": {"NoncurrentDays": 90}
-          }]
+          "Rules": [
+            {
+              "Id": "ExpireOldNoncurrentVersions",
+              "Status": "Enabled",
+              "NoncurrentVersionExpiration": {"NoncurrentDays": 90}
+            },
+            {
+              "Id": "AbortIncompleteMultipartUploads",
+              "Status": "Enabled",
+              "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 7}
+            }
+          ]
         },
         "Tags": [
           {"Key": "Application", "Value": "EvidenceDesk"},
@@ -220,8 +227,10 @@
         "PubliclyAccessible": false,
         "Port": 5432,
         "BackupRetentionPeriod": {"Ref": "BackupRetentionDays"},
+        "DeleteAutomatedBackups": false,
         "CopyTagsToSnapshot": true,
         "AutoMinorVersionUpgrade": true,
+        "EnableCloudwatchLogsExports": ["postgresql", "upgrade"],
         "MultiAZ": {"Fn::If": ["UseMultiAZ", true, false]},
         "DeletionProtection": {"Fn::If": ["ProtectDatabase", true, false]},
         "Tags": [

@@ -19,6 +19,9 @@ or experience claim.
   PostgreSQL instance, separate bootstrap/runtime credentials in Secrets Manager, backups,
   retain/snapshot deletion behavior, and an ECS task role restricted to the EvidenceDesk object
   prefix, application secret, and data key.
+- `python -m app.durability` captures a secret-free, content-free database/original fingerprint and
+  compares it with a separately restored target. The detailed procedure is in
+  [durability-acceptance.md](durability-acceptance.md).
 
 The template has not been applied by this repository. Creating it can incur AWS charges. RDS and
 S3 eligibility, credits, and prices depend on account age, region, configuration, and usage; review
@@ -83,6 +86,8 @@ EVIDENCEDESK_S3_PREFIX=evidencedesk/originals
 EVIDENCEDESK_S3_REGION=<stack region>
 EVIDENCEDESK_S3_KMS_KEY_ID=<DataKeyArn output>
 EVIDENCEDESK_S3_EXPECTED_BUCKET_OWNER=<12-digit AWS account id>
+# Set only in the temporary operator shell used for restore acceptance.
+EVIDENCEDESK_DURABILITY_MANIFEST_KEY=<random operator-only value, at least 32 characters>
 ```
 
 Use the current Amazon RDS CA bundle in the application image when `verify-full` is selected. The
@@ -126,11 +131,13 @@ Before directing users to the managed service:
 2. Sign in with a test account, open an existing original, ask a known question, follow its
    citation, upload a synthetic PDF, and permanently delete that synthetic document.
 3. Compare migration row counts and run the full evaluation suite.
-4. Take a manual RDS snapshot, restore it to a separate private instance, and repeat a read-only
-   smoke test. Automated backups are configuration, not proof of restore.
-5. Confirm the ECS task role cannot retrieve `DatabaseBootstrapSecretArn` and cannot access S3
+4. Stop traffic and capture `outputs/durability/pre-backup.json` with
+   `python -m app.durability snapshot`.
+5. Take a manual RDS snapshot, restore it to a separate private instance, recover a disposable
+   synthetic S3 object version, and run `python -m app.durability verify` against the baseline.
+   Automated backups and bucket versioning are configuration, not proof of restore.
+6. Confirm the ECS task role cannot retrieve `DatabaseBootstrapSecretArn` and cannot access S3
    objects outside `evidencedesk/originals/`.
-6. Confirm S3 version recovery on a disposable synthetic object.
 7. Keep the original source offline and unchanged through the acceptance window.
 
 Rollback means routing traffic back to the unchanged source deployment before accepting new writes

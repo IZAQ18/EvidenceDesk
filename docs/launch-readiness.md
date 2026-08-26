@@ -14,7 +14,7 @@ the organization has not supplied enough information.
 | Gate | Measurable definition | Current state |
 | --- | --- | --- |
 | Account safety | Individual sign-in, verified email, recovery, revocable sessions, CSRF protection, tenant isolation | Verification/recovery, scoped invitations, and workspace switching implemented and tested; real SMTP/domain and managed-data acceptance pending |
-| Durable data | Managed PostgreSQL, private object storage, backups, restore exercise | Adapters, bounded pooling, readiness checks, guarded copy tool, and unapplied AWS data-plane template implemented; PostgreSQL 16 path tested in CI. Managed-resource acceptance and restore exercise pending |
+| Durable data | Managed PostgreSQL, private object storage, backups, restore exercise | Adapters, bounded pooling, readiness checks, guarded copy tool, restore verifier, and unapplied AWS data-plane template implemented; PostgreSQL 16 path tested in CI. Managed-resource provisioning and operator-run restore acceptance pending |
 | Ingestion | Async processing, malware scan, progress, resilient OCR and table handling | Durable jobs, visible progress, bounded retry, integrity verification, and lease recovery implemented; isolated workers, malware scanning, and advanced table extraction pending |
 | Answer quality | Organization-specific gold set, >=95% retrieval success, >=98% valid citations | Hybrid local semantic retrieval, reranking, diagnostics, and an 8-case synthetic regression benchmark implemented; customer-specific held-out evaluation pending |
 | Customer AI | Server-managed provider, quotas, cost controls, no customer key required | Gateway, fallbacks, usage controls, and fake-provider tests implemented; provider/privacy acceptance and live configuration pending |
@@ -183,3 +183,25 @@ The shared-workspace lifecycle now provides:
 These controls close the MVP's application-level ownership-transfer gap. Managed identity,
 periodic access certification, phishing-resistant step-up authentication, real SMTP/S3 cleanup,
 backup expiry, and operational recovery still require deployment acceptance before public accounts.
+
+## Milestone 9 evidence
+
+The durable-staging acceptance seam now provides:
+
+- a read-only PostgreSQL connection-pool open path that does not apply schema changes;
+- two-pass fingerprints for every application table, with refusal if data changes during capture;
+- streaming size and SHA-256 verification for every database-referenced original under bounded row,
+  object, and byte limits;
+- managed-target refusal unless production PostgreSQL and KMS-encrypted S3 expected-owner settings
+  are configured;
+- read-only checks for S3 versioning, KMS default encryption, and all public-access blocks;
+- content-free, identifier-free baseline and restore-result artifacts authenticated with an
+  operator-only HMAC key;
+- automated tests for successful comparison, database drift, modified originals, baseline tampering,
+  local-target refusal, and S3 control failure; and
+- clearer RDS/S3 recovery steps plus retained automated backups and PostgreSQL log exports in the
+  unapplied CloudFormation template.
+
+No managed resources or backups were created. This closes the tooling gap, not the operational
+gate: an operator must still provision a cost-reviewed staging target, capture a baseline, restore
+RDS separately, recover a synthetic S3 version, and obtain `verified: true` before public accounts.

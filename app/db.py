@@ -572,6 +572,10 @@ class Database:
             connection.executescript(SCHEMA)
             self._migrate(connection)
 
+    def open(self) -> None:
+        """Open connection resources without changing the schema."""
+        return None
+
     def ping(self) -> bool:
         with self.connect() as connection:
             return connection.execute("SELECT 1").fetchone()[0] == 1
@@ -681,8 +685,7 @@ class PostgresDatabase:
         return self.pool
 
     def initialize(self) -> None:
-        pool = self._ensure_pool()
-        pool.open(wait=True, timeout=self.timeout)
+        self.open()
         with self.connect() as connection:
             connection.execute("SELECT pg_advisory_xact_lock(8242026)")
             connection.execute(
@@ -706,6 +709,11 @@ class PostgresDatabase:
                     "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
                     (version, datetime.now(UTC).isoformat()),
                 )
+
+    def open(self) -> None:
+        """Open the pool without applying migrations, for read-only acceptance checks."""
+        pool = self._ensure_pool()
+        pool.open(wait=True, timeout=self.timeout)
 
     def ping(self) -> bool:
         with self.connect() as connection:

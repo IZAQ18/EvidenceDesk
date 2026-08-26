@@ -19,6 +19,8 @@ def test_aws_data_template_has_private_recoverable_defaults():
     assert encryption["ServerSideEncryptionConfiguration"][0][
         "ServerSideEncryptionByDefault"
     ]["SSEAlgorithm"] == "aws:kms"
+    lifecycle_rules = bucket["Properties"]["LifecycleConfiguration"]["Rules"]
+    assert any("AbortIncompleteMultipartUpload" in rule for rule in lifecycle_rules)
 
     database = resources["Database"]
     properties = database["Properties"]
@@ -26,6 +28,8 @@ def test_aws_data_template_has_private_recoverable_defaults():
     assert properties["StorageEncrypted"] is True
     assert properties["ManageMasterUserPassword"] is True
     assert properties["BackupRetentionPeriod"] == {"Ref": "BackupRetentionDays"}
+    assert properties["DeleteAutomatedBackups"] is False
+    assert properties["EnableCloudwatchLogsExports"] == ["postgresql", "upgrade"]
     assert database["DeletionPolicy"] == "Snapshot"
 
     role_statements = resources["ApplicationTaskRole"]["Properties"]["Policies"][0][

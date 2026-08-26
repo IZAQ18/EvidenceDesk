@@ -66,6 +66,10 @@ Archive removes a document from normal retrieval without destroying it. Permanen
 - The S3 adapter is implemented and unit-tested with a fake client, but real IAM, bucket policy,
   lifecycle, access logging, malware quarantine, and restore behavior still require integration
   testing in the selected AWS account.
+- The durability verifier performs a bounded, read-only, two-pass database fingerprint and streams
+  every referenced original for size/SHA-256 verification. It can compare a separate restored
+  target with a baseline and inspect critical S3 controls without emitting content or identifiers;
+  it still requires a real operator-run RDS/S3 restore exercise.
 - OIDC has unit-tested token and claim mapping, but must be integration-tested with the selected identity provider.
 - The account boundary supports SQLite locally and is exercised against PostgreSQL 16 in CI.
   Verification, recovery, invitations, switching, bounded export, and guarded deletion are

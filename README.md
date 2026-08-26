@@ -211,13 +211,27 @@ streaming, retrieval, citation generation, and cross-workspace isolation. This i
 evidence, not a claim that EvidenceDesk has operated an AWS RDS production workload. A guarded
 SQLite/local-to-PostgreSQL/S3 copy tool and an unapplied CloudFormation data-plane template are
 included; AWS acceptance and backup/restore drills remain launch gates. Follow the
-[AWS migration and rollback runbook](docs/aws-deployment.md).
+[AWS migration and rollback runbook](docs/aws-deployment.md) and the
+[backup/restore acceptance procedure](docs/durability-acceptance.md).
 
 The migration command is a read-only integrity preflight unless `--execute` is supplied:
 
 ```bash
 python -m app.migrate_data --source-db data/evidencedesk.db --source-originals data/originals
 ```
+
+After moving synthetic staging data to PostgreSQL/S3, stop writes and capture a bounded durability
+baseline. Compare the same baseline against a separately restored target:
+
+```bash
+python -m app.durability snapshot --output outputs/durability/pre-backup.json
+python -m app.durability verify --baseline outputs/durability/pre-backup.json \
+  --output outputs/durability/restore-result.json
+```
+
+This verifies keyed table fingerprints, every referenced original, and critical S3 controls without
+putting filenames, content, storage keys, database URLs, or credentials into the report. It does
+not create AWS resources or claim that a restore has been performed.
 
 ### Optional server-managed model synthesis
 

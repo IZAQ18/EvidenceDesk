@@ -71,6 +71,7 @@ class Settings(BaseSettings):
     s3_endpoint_url: str | None = None
     s3_kms_key_id: SecretStr | None = None
     s3_expected_bucket_owner: str | None = Field(default=None, pattern=r"^\d{12}$")
+    durability_manifest_key: SecretStr | None = Field(default=None, min_length=32, max_length=512)
     max_upload_bytes: int = Field(default=10_000_000, ge=1, le=50_000_000)
     ingestion_worker_enabled: bool = True
     ingestion_worker_poll_seconds: float = Field(default=0.5, ge=0.1, le=30)
