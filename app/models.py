@@ -234,7 +234,18 @@ class IngestionJobOut(BaseModel):
     filename: str
     classification: Classification
     status: Literal["queued", "processing", "ready", "failed"]
-    stage: Literal["security_check", "queued", "extracting", "ocr", "indexing", "ready", "failed"]
+    stage: Literal[
+        "security_check",
+        "scanning",
+        "queued",
+        "extracting",
+        "ocr",
+        "indexing",
+        "ready",
+        "failed",
+        "quarantined",
+        "dead_letter",
+    ]
     progress: int = Field(ge=0, le=100)
     detail: str
     attempts: int

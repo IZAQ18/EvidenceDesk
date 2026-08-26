@@ -9,8 +9,8 @@ EvidenceDesk optimizes for traceable answers, access decisions before retrieval,
 1. **FastAPI edge:** validates requests, authenticates account sessions, API keys, or OIDC bearer tokens, applies rate limits and security headers, and exposes document, answer, conversation, feedback, report, and insight endpoints.
 2. **Account boundary:** optional self-registration creates an isolated workspace and administrator membership. Passwords use salted scrypt hashes; random sessions are stored only as SHA-256 token hashes, sent through HttpOnly cookies, expire server-side, and require a per-session CSRF token for mutations. Optional verification, recovery, and workspace invitations use purpose-bound, expiring, rotating, one-time token hashes; password reset revokes all sessions. Account mode also provides scoped workspace switching, a bounded secret-free workspace export, and guarded deletion.
 3. **Policy layer:** maps identity to subject, tenant, role, and classification clearances. Those constraints are SQL predicates used before evidence reaches the answer workflow.
-4. **Ingestion:** stages an authorized upload, records a durable job, and returns immediately. A database-leased worker rechecks type, byte count, digest, and PDF signature; enforces page, OCR-page, and resolution limits; extracts embedded text; OCRs weak PDF pages when available; records extraction diagnostics; and atomically creates page-aware chunks and the searchable document. Failed jobs keep a safe explanation and can be retried within a configured attempt limit.
-5. **Original store:** writes each original behind a small storage interface. Local mode uses generated tenant/document paths, containment checks, fsync, and an atomic final rename. Optional S3 mode uses tenant-scoped keys, server-side AES-256 or KMS encryption, expected-owner checks, and authenticated application streaming; it never creates a public object URL.
+4. **Ingestion:** writes an authorized upload to a quarantine namespace, records a durable job, and returns immediately. A database-leased worker rechecks type, byte count, digest, and PDF signature; streams to a configured private ClamAV service; applies page/OCR/text limits; runs parsing in a secret-scrubbed child process with time and POSIX resource ceilings; then promotes the clean original and atomically creates page-aware chunks and the searchable document. Safe failed, quarantined, and dead-letter states remain visible to users and administrators.
+5. **Original store:** writes each original behind a small storage interface. Local mode uses generated quarantine/tenant paths, containment checks, fsync, atomic writes, and copy-before-commit promotion. Optional S3 mode uses quarantine and tenant-scoped keys, server-side AES-256 or KMS encryption, expected-owner checks, authenticated copy/streaming, and no public object URL.
 6. **Evidence store:** a dual adapter records documents, pages, chunks, conversations, messages, feedback, accounts, workspaces, sessions, and text-free audit events. SQLite keeps local setup portable. PostgreSQL uses versioned migrations protected by a transaction advisory lock, a bounded per-process connection pool, and is exercised in CI against PostgreSQL 16.
 7. **Retrieval:** first applies tenant, classification, lifecycle, and explicit document scope in SQL. It then combines database full-text results with a bounded authorized candidate pool scored by transparent local semantic feature vectors. Reciprocal rank fusion and a question-aware passage reranker reward direct term coverage, domain concepts, metadata, and answer shapes such as quantities or deadlines. SQLite uses FTS5; PostgreSQL uses a GIN-backed `to_tsvector` index and native web-search queries.
 8. **Bounded answer workflow:** selects supported source passages, creates structured page citations, labels evidence quality, and refuses when support is insufficient. An optional server-managed model can organize only the selected authorized excerpts. Strict output, citation, number, negation, and term-support checks run before acceptance; every failure uses the local extractive answer. The free pilot keeps this gateway disabled.
@@ -57,15 +57,16 @@ Archive removes a document from normal retrieval without destroying it. Permanen
   enabling them.
 - OCR depends on scan quality, language data, layout, and Tesseract; handwriting and complex tables remain difficult.
 - Browser ingestion is asynchronous and survives web-request timeouts through durable database
-  jobs and expiring worker leases. The bundled worker still shares the web container; production
-  should use a separate constrained worker, a managed queue, a true quarantine prefix/bucket,
-  and malware scanning before extraction.
+  jobs and expiring worker leases. A standalone worker entry point, quarantine promotion, clamd
+  adapter, and parser subprocess are implemented. Production still must deploy/accept them in a
+  separately constrained task and add a managed queue/redrive DLQ if multi-instance throughput
+  requires it.
 - SQLite and in-process throttling are single-instance choices. PostgreSQL plus bounded connection
   pooling removes the local database constraint, but RDS integration, backups, and restore drills
   remain deployment acceptance work.
-- The S3 adapter is implemented and unit-tested with a fake client, but real IAM, bucket policy,
-  lifecycle, access logging, malware quarantine, and restore behavior still require integration
-  testing in the selected AWS account.
+- The S3 quarantine/promotion adapter is implemented and unit-tested with a fake client, but real
+  IAM, bucket policy, lifecycle, access logging, clamd, and restore behavior still require
+  integration testing in the selected AWS account.
 - The durability verifier performs a bounded, read-only, two-pass database fingerprint and streams
   every referenced original for size/SHA-256 verification. It can compare a separate restored
   target with a baseline and inspect critical S3 controls without emitting content or identifiers;

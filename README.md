@@ -9,9 +9,9 @@ This is an intentionally honest portfolio MVP. It runs locally and demonstrates 
 ## What v1.0 includes
 
 - Page-aware PDF extraction with bounded OCR fallback for weak pages.
-- Durable asynchronous upload jobs with real security-check, extraction, OCR, indexing,
-  ready, and failed states; bounded retries; staged-file integrity checks; and expired-worker
-  lease recovery.
+- Durable asynchronous upload jobs with quarantine-first storage, optional private ClamAV streaming,
+  resource-limited parser subprocesses, extraction/OCR/indexing progress, bounded retries,
+  dead-letter and quarantined terminal states, integrity checks, and expired-worker lease recovery.
 - Original-file and extracted-page preview with highlighted cited passages.
 - Authorization-first hybrid retrieval combining database full-text search with deterministic,
   auditable local semantic feature vectors, reciprocal rank fusion, and a question-aware reranker.
@@ -59,9 +59,9 @@ Browser / API client
        ▼
 FastAPI ──► identity + tenant/classification/role policy
        │
-       ├──► upload ─► protected staging ─► durable job queue
-       │                                  └──► worker lease ─► validate
-       │                                       ─► extract/OCR ─► chunks/index
+       ├──► upload ─► quarantine ─► durable job queue
+       │                            └──► worker lease ─► private malware scan
+       │                                 ─► bounded parser/OCR process ─► promote/index
        │                         ├──► private local or S3 original store
        │                         └──► SQLite or PostgreSQL metadata/search
        │
@@ -76,18 +76,20 @@ synthesis, and citation verification add value; open-ended tools and uncontrolle
 SQLite FTS5 keeps the local demo portable. The local semantic encoder uses transparent sparse
 policy features rather than a pretrained neural embedding model. See [architecture](docs/architecture.md),
 [evaluation](docs/evaluation.md), [delivery plan](docs/delivery-plan.md), [threat model](docs/threat-model.md),
-and [AWS path](docs/aws-deployment.md).
+[AWS path](docs/aws-deployment.md), and the [transformation report](docs/transformation-report.md).
 
 The optional model gateway is server-managed and fail-safe; it is not an autonomous agent. See the
 [gateway privacy, validation, and cost controls](docs/model-gateway.md). OpenAI's current official
 [data controls](https://developers.openai.com/api/docs/guides/your-data) explain why `store:false`
 does not by itself promise zero provider retention.
 
-The browser queues uploads through `/v1/ingestion-jobs` and polls the durable job record. The
-legacy `/v1/documents` upload remains synchronous for API compatibility. The bundled worker is
-crash-recoverable through database leases, but it runs inside the web container and is not an
-isolated malware scanner. The AWS launch path replaces it with SQS and a separately constrained
-ECS worker plus a real malware-scanning step.
+The browser queues uploads through `/v1/ingestion-jobs` and polls the durable job record. Files stay
+under a non-public quarantine prefix until all configured checks succeed. The legacy
+`/v1/documents` upload remains synchronous for API compatibility but uses the same scanner and
+bounded extraction path. `python -m app.ingestion_worker` lets deployment run the lease worker as a
+separate service. A private ClamAV `clamd` endpoint can be required fail-closed; it is deliberately
+not configured on the public synthetic Render pilot. See the
+[secure ingestion runbook](docs/secure-ingestion.md).
 
 ## Run locally
 

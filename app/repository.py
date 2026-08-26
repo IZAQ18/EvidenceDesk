@@ -149,7 +149,7 @@ class Repository:
                     expires_at,
                     supersedes_document_id,
                     storage_path,
-                    "Security checks passed. Waiting for an ingestion worker.",
+                    "Upload isolated in quarantine. Waiting for security scanning.",
                     max_attempts,
                     now,
                     now,
@@ -218,16 +218,19 @@ class Repository:
             )
             return cursor.rowcount > 0
 
-    def finish_ingestion_job(self, job_id: str, worker_id: str) -> bool:
+    def finish_ingestion_job(
+        self, job_id: str, worker_id: str, storage_path: str | None = None
+    ) -> bool:
         now = _now()
         with self.database.connect() as connection:
             cursor = connection.execute(
                 """UPDATE ingestion_jobs
                    SET status = 'ready', stage = 'ready', progress = 100,
                        detail = 'Evidence is indexed and ready to search.',
+                       storage_path = COALESCE(?, storage_path),
                        lease_expires_at = NULL, worker_id = NULL, updated_at = ?, finished_at = ?
                    WHERE id = ? AND status = 'processing' AND worker_id = ?""",
-                (now, now, job_id, worker_id),
+                (storage_path, now, now, job_id, worker_id),
             )
             return cursor.rowcount > 0
 
@@ -239,16 +242,31 @@ class Repository:
         code: str,
         message: str,
         action: str | None,
+        retryable: bool = True,
+        quarantined: bool = False,
     ) -> bool:
         now = _now()
         with self.database.connect() as connection:
+            job = connection.execute(
+                """SELECT attempts, max_attempts FROM ingestion_jobs
+                   WHERE id = ? AND status = 'processing' AND worker_id = ?""",
+                (job_id, worker_id),
+            ).fetchone()
+            if not job:
+                return False
+            if quarantined:
+                stage = "quarantined"
+            elif not retryable or job["attempts"] >= job["max_attempts"]:
+                stage = "dead_letter"
+            else:
+                stage = "failed"
             cursor = connection.execute(
                 """UPDATE ingestion_jobs
-                   SET status = 'failed', stage = 'failed', progress = 100, detail = ?,
+                   SET status = 'failed', stage = ?, progress = 100, detail = ?,
                        error_code = ?, error_message = ?, error_action = ?,
                        lease_expires_at = NULL, worker_id = NULL, updated_at = ?, finished_at = ?
                    WHERE id = ? AND status = 'processing' AND worker_id = ?""",
-                (message, code, message, action, now, now, job_id, worker_id),
+                (stage, message, code, message, action, now, now, job_id, worker_id),
             )
             return cursor.rowcount > 0
 
@@ -281,7 +299,7 @@ class Repository:
                         error_code = NULL, error_message = NULL, error_action = NULL,
                         worker_id = NULL, lease_expires_at = NULL, finished_at = NULL,
                         updated_at = ?
-                    WHERE id = ? AND tenant_id = ? AND status = 'failed'
+                    WHERE id = ? AND tenant_id = ? AND status = 'failed' AND stage = 'failed'
                       AND attempts < max_attempts
                       AND classification IN ({placeholders})"""  # noqa: S608
         with self.database.connect() as connection:
@@ -1036,6 +1054,17 @@ class Repository:
                    FROM model_usage_daily WHERE tenant_id = ? AND usage_date = ?""",
                 (principal.tenant_id, datetime.now(UTC).date().isoformat()),
             ).fetchone()
+            ingestion_rows = connection.execute(
+                """SELECT stage, COUNT(*) count FROM ingestion_jobs
+                   WHERE tenant_id = ? GROUP BY stage""",
+                (principal.tenant_id,),
+            ).fetchall()
+            oldest_pending = connection.execute(
+                """SELECT created_at FROM ingestion_jobs
+                   WHERE tenant_id = ? AND status IN ('queued','processing')
+                   ORDER BY created_at LIMIT 1""",
+                (principal.tenant_id,),
+            ).fetchone()
         return {
             "documents": dict(documents),
             "answers": dict(answers),
@@ -1048,6 +1077,22 @@ class Repository:
                     "reserved_tokens": 0,
                     "reserved_cost_microusd": 0,
                 },
+            },
+            "ingestion": {
+                "by_stage": {row["stage"]: row["count"] for row in ingestion_rows},
+                "pending": sum(
+                    row["count"]
+                    for row in ingestion_rows
+                    if row["stage"]
+                    in {"queued", "security_check", "scanning", "extracting", "ocr", "indexing"}
+                ),
+                "quarantined": sum(
+                    row["count"] for row in ingestion_rows if row["stage"] == "quarantined"
+                ),
+                "dead_letter": sum(
+                    row["count"] for row in ingestion_rows if row["stage"] == "dead_letter"
+                ),
+                "oldest_pending_at": oldest_pending["created_at"] if oldest_pending else None,
             },
             "recent_audit": [
                 {**dict(row), "detail": json.loads(row["detail_json"])} for row in recent_audit

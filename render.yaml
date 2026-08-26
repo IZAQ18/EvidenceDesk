@@ -45,6 +45,17 @@ services:
         value: "40"
       - key: EVIDENCEDESK_OCR_MAX_PAGES
         value: "10"
+      - key: EVIDENCEDESK_INGESTION_PROCESS_ISOLATION_ENABLED
+        value: "true"
+      - key: EVIDENCEDESK_INGESTION_EXTRACTION_TIMEOUT_SECONDS
+        value: "90"
+      - key: EVIDENCEDESK_INGESTION_WORKER_MEMORY_MB
+        value: "384"
+      # This public synthetic pilot has no private ClamAV service. Do not call it malware-scanned.
+      - key: EVIDENCEDESK_MALWARE_SCANNER_BACKEND
+        value: disabled
+      - key: EVIDENCEDESK_MALWARE_SCAN_REQUIRED
+        value: "false"
       - key: EVIDENCEDESK_EXPOSE_API_DOCS
         value: "false"
       - key: EVIDENCEDESK_ALLOWED_HOSTS

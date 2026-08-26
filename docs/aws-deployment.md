@@ -22,6 +22,9 @@ or experience claim.
 - `python -m app.durability` captures a secret-free, content-free database/original fingerprint and
   compares it with a separately restored target. The detailed procedure is in
   [durability-acceptance.md](durability-acceptance.md).
+- `python -m app.ingestion_worker` runs ingestion separately from the API. The worker supports a
+  required private clamd scan and resource-limited parser/OCR subprocesses; configuration and
+  acceptance checks are in [secure-ingestion.md](secure-ingestion.md).
 
 The template has not been applied by this repository. Creating it can incur AWS charges. RDS and
 S3 eligibility, credits, and prices depend on account age, region, configuration, and usage; review
@@ -34,7 +37,7 @@ the current official [RDS](https://aws.amazon.com/rds/features/) and
 Route 53 → WAF → ALB → ECS/Fargate API → private RDS PostgreSQL
                             │                    │
                             ├→ private S3        └→ automated backups/snapshots
-                            └→ SQS → isolated ingestion workers (next milestone)
+                            └→ SQS → isolated ingestion workers → private clamd
 ```
 
 The supplied template covers the right-hand data plane, not the VPC, load balancer, ECS service,
@@ -147,8 +150,9 @@ retain backups according to a written retention/deletion policy rather than dele
 ## Still required before public accounts
 
 - Deploy ALB/ECS in private subnets and terminate TLS with ACM.
-- Move ingestion into SQS-backed, separately constrained workers with malware scanning and a
-  dead-letter queue.
+- Deploy the implemented standalone ingestion worker and private clamd service under separate
+  CPU/memory/network limits; add SQS redrive/DLQ around the database-backed job lane if required by
+  the chosen multi-instance topology, then run the secure-ingestion acceptance drill.
 - Add central logs, metrics, alarms, distributed throttling, incident procedures, and dependency
   scanning.
 - Accept a real sender domain and SMTP provider; exercise the implemented invitation,

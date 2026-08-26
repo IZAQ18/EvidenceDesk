@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import mimetypes
 import os
+import shutil
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, Protocol
@@ -24,6 +25,24 @@ class OriginalStorage(Protocol):
     ) -> str: ...
 
     def stream(self, reference: str) -> Iterable[bytes]: ...
+
+    def stage(
+        self,
+        tenant_id: str,
+        job_id: str,
+        extension: str,
+        content: bytes,
+        content_type: str | None = None,
+    ) -> str: ...
+
+    def promote(
+        self,
+        reference: str,
+        tenant_id: str,
+        document_id: str,
+        extension: str,
+        content_type: str | None = None,
+    ) -> str: ...
 
     def delete(self, reference: str | None) -> None: ...
 
@@ -83,6 +102,54 @@ class LocalDocumentStorage:
             os.fsync(handle.fileno())
         temporary.replace(target)
         return f"local:{relative}"
+
+    def stage(
+        self,
+        tenant_id: str,
+        job_id: str,
+        extension: str,
+        content: bytes,
+        content_type: str | None = None,
+    ) -> str:
+        del content_type
+        relative = (
+            f"quarantine/{_safe_tenant(tenant_id)}/{job_id}{_safe_extension(extension)}"
+        )
+        target = self._resolve(relative)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_suffix(target.suffix + ".tmp")
+        with temporary.open("wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(target)
+        return f"local:{relative}"
+
+    def promote(
+        self,
+        reference: str,
+        tenant_id: str,
+        document_id: str,
+        extension: str,
+        content_type: str | None = None,
+    ) -> str:
+        del content_type
+        source = self._resolve(reference)
+        relative = self._relative(reference)
+        if not relative.startswith("quarantine/") or not source.is_file():
+            raise ValueError("Only an existing quarantined upload can be promoted")
+        final_relative = f"{_safe_tenant(tenant_id)}/{document_id}{_safe_extension(extension)}"
+        target = self._resolve(final_relative)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            raise FileExistsError("A promoted original already exists")
+        temporary = target.with_suffix(target.suffix + ".tmp")
+        with source.open("rb") as source_handle, temporary.open("wb") as target_handle:
+            shutil.copyfileobj(source_handle, target_handle, length=_CHUNK_BYTES)
+            target_handle.flush()
+            os.fsync(target_handle.fileno())
+        temporary.replace(target)
+        return f"local:{final_relative}"
 
     def path_for(self, reference: str) -> Path:
         path = self._resolve(reference)
@@ -183,6 +250,62 @@ class S3DocumentStorage:
             **self._owner(),
         )
         return f"s3:{key}"
+
+    def stage(
+        self,
+        tenant_id: str,
+        job_id: str,
+        extension: str,
+        content: bytes,
+        content_type: str | None = None,
+    ) -> str:
+        extension = _safe_extension(extension)
+        key = f"{self.prefix}/quarantine/{_safe_tenant(tenant_id)}/{job_id}{extension}"
+        encryption = (
+            {"ServerSideEncryption": "aws:kms", "SSEKMSKeyId": self.kms_key_id}
+            if self.kms_key_id
+            else {"ServerSideEncryption": "AES256"}
+        )
+        self.client.put_object(
+            Bucket=self.bucket,
+            Key=key,
+            Body=content,
+            ContentType=content_type or "application/octet-stream",
+            **encryption,
+            **self._owner(),
+        )
+        return f"s3:{key}"
+
+    def promote(
+        self,
+        reference: str,
+        tenant_id: str,
+        document_id: str,
+        extension: str,
+        content_type: str | None = None,
+    ) -> str:
+        source_key = self._key(reference)
+        if not source_key.startswith(f"{self.prefix}/quarantine/"):
+            raise ValueError("Only a quarantined S3 object can be promoted")
+        extension = _safe_extension(extension)
+        target_key = f"{self.prefix}/{_safe_tenant(tenant_id)}/{document_id}{extension}"
+        encryption = (
+            {"ServerSideEncryption": "aws:kms", "SSEKMSKeyId": self.kms_key_id}
+            if self.kms_key_id
+            else {"ServerSideEncryption": "AES256"}
+        )
+        parameters: dict[str, Any] = {
+            "Bucket": self.bucket,
+            "Key": target_key,
+            "CopySource": {"Bucket": self.bucket, "Key": source_key},
+            "MetadataDirective": "COPY",
+            **encryption,
+            **self._owner(),
+        }
+        if self.expected_bucket_owner:
+            parameters["ExpectedSourceBucketOwner"] = self.expected_bucket_owner
+        self.client.copy_object(**parameters)
+        return f"s3:{target_key}"
 
     def stream(self, reference: str) -> Iterable[bytes]:
         key = self._key(reference)

@@ -5,16 +5,21 @@ import hashlib
 import json
 import logging
 import os
+import signal
 from contextlib import suppress
+from pathlib import Path
 from uuid import uuid4
 
 from fastapi import HTTPException
 
 from app.config import Settings
-from app.ingestion import chunk_pages, extract_bytes, validate_upload_bytes
+from app.db import build_database
+from app.ingestion import chunk_pages, validate_upload_bytes
+from app.isolated_extraction import extract_in_isolated_process
+from app.malware import MalwareScanner, build_malware_scanner
 from app.models import Principal
 from app.repository import DuplicateDocumentError, Repository
-from app.storage import OriginalStorage
+from app.storage import OriginalStorage, build_document_storage
 
 logger = logging.getLogger("evidencedesk.ingestion")
 
@@ -54,12 +59,17 @@ def process_ingestion_job(
     repository: Repository,
     storage: OriginalStorage,
     settings: Settings,
+    malware_scanner: MalwareScanner,
 ) -> None:
     principal = _principal(job)
+    promoted_reference: str | None = None
     try:
         existing = repository.get_document(job["document_id"], principal)
         if existing:
-            repository.finish_ingestion_job(job["id"], worker_id)
+            existing_reference = existing.get("storage_path")
+            repository.finish_ingestion_job(job["id"], worker_id, existing_reference)
+            if job.get("storage_path") != existing_reference:
+                storage.delete(job.get("storage_path"))
             return
 
         content = _read_staged(storage, job["storage_path"], settings.max_upload_bytes)
@@ -77,9 +87,60 @@ def process_ingestion_job(
         repository.update_ingestion_job(
             job["id"],
             worker_id,
+            stage="scanning",
+            progress=28,
+            detail="Streaming the quarantined upload through the malware scanner.",
+            lease_seconds=settings.ingestion_job_lease_seconds,
+        )
+        try:
+            scan = malware_scanner.scan(content)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "malware_scanner_unavailable",
+                    "message": "The private malware scanner is temporarily unavailable.",
+                    "action": "Retry later. The upload remains isolated and is not searchable.",
+                },
+            ) from exc
+        if scan.status == "infected":
+            repository.fail_ingestion_job(
+                job["id"],
+                worker_id,
+                code="malware_detected",
+                message="The upload was blocked by the malware scanner.",
+                action="An administrator should remove the quarantined upload.",
+                retryable=False,
+                quarantined=True,
+            )
+            repository.audit(
+                principal,
+                "ingestion_upload_quarantined",
+                "ingestion_job",
+                job["id"],
+                {"engine": scan.engine},
+            )
+            return
+        if scan.status in {"skipped", "unavailable"} and settings.malware_scan_required:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "malware_scan_required",
+                    "message": "Required malware scanning did not complete.",
+                    "action": "Retry after the private scanner is healthy.",
+                },
+            )
+
+        repository.update_ingestion_job(
+            job["id"],
+            worker_id,
             stage="extracting",
             progress=38,
-            detail="Opening the document in the isolated extraction step.",
+            detail=(
+                "Opening the document in a resource-limited extraction process."
+                if settings.ingestion_process_isolation_enabled
+                else "Opening the document in the bounded extraction step."
+            ),
             lease_seconds=settings.ingestion_job_lease_seconds,
         )
         if job["filename"].lower().endswith(".pdf"):
@@ -91,7 +152,9 @@ def process_ingestion_job(
                 detail="Inspecting PDF pages and OCRing weak pages when needed.",
                 lease_seconds=settings.ingestion_job_lease_seconds,
             )
-        extracted = extract_bytes(job["filename"], job["content_type"], content, settings)
+        extracted = extract_in_isolated_process(
+            job["filename"], job["content_type"], content, settings
+        )
         chunks = chunk_pages(extracted.pages)
         if len(chunks) > settings.max_chunks_per_document:
             raise HTTPException(status_code=413, detail="Document creates too many chunks")
@@ -104,21 +167,34 @@ def process_ingestion_job(
             detail="Creating page-aware evidence and the searchable index.",
             lease_seconds=settings.ingestion_job_lease_seconds,
         )
-        repository.add_document(
-            extracted,
-            chunks,
-            job["classification"],
-            job.get("source"),
-            principal,
-            document_id=job["document_id"],
-            storage_path=job["storage_path"],
-            collection=job.get("collection"),
-            version=job.get("version"),
-            effective_date=job.get("effective_date"),
-            expires_at=job.get("expires_at"),
-            supersedes_document_id=job.get("supersedes_document_id"),
+        promoted_reference = storage.promote(
+            job["storage_path"],
+            principal.tenant_id,
+            job["document_id"],
+            Path(job["filename"]).suffix,
+            extracted.content_type,
         )
-        repository.finish_ingestion_job(job["id"], worker_id)
+        try:
+            repository.add_document(
+                extracted,
+                chunks,
+                job["classification"],
+                job.get("source"),
+                principal,
+                document_id=job["document_id"],
+                storage_path=promoted_reference,
+                collection=job.get("collection"),
+                version=job.get("version"),
+                effective_date=job.get("effective_date"),
+                expires_at=job.get("expires_at"),
+                supersedes_document_id=job.get("supersedes_document_id"),
+            )
+        except Exception:
+            storage.delete(promoted_reference)
+            promoted_reference = None
+            raise
+        repository.finish_ingestion_job(job["id"], worker_id, promoted_reference)
+        storage.delete(job["storage_path"])
         repository.audit(
             principal,
             "document_ingested_async",
@@ -138,6 +214,7 @@ def process_ingestion_job(
             code="duplicate_document",
             message="An identical document already exists at this classification.",
             action="Delete this job or upload a newer document version.",
+            retryable=False,
         )
     except HTTPException as exc:
         code, message, action = _error_detail(exc)
@@ -160,6 +237,7 @@ async def run_ingestion_worker(
     storage: OriginalStorage,
     settings: Settings,
     stop: asyncio.Event,
+    malware_scanner: MalwareScanner,
 ) -> None:
     worker_id = f"{os.getpid()}-{uuid4()}"
     logger.info("ingestion_worker_started worker_id=%s", worker_id)
@@ -177,6 +255,7 @@ async def run_ingestion_worker(
                 repository=repository,
                 storage=storage,
                 settings=settings,
+                malware_scanner=malware_scanner,
             )
             continue
         try:
@@ -191,3 +270,45 @@ async def stop_ingestion_worker(stop: asyncio.Event, task: asyncio.Task[None]) -
     task.cancel()
     with suppress(asyncio.CancelledError):
         await task
+
+
+async def _run_standalone() -> None:
+    settings = Settings()
+    settings.validate_database()
+    settings.validate_storage()
+    settings.validate_ingestion_security()
+    database = build_database(settings)
+    storage = build_document_storage(settings)
+    scanner = build_malware_scanner(settings)
+    repository = Repository(
+        database,
+        semantic_candidate_limit=settings.semantic_candidate_limit,
+        semantic_min_score=settings.semantic_min_score,
+    )
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for signal_name in (signal.SIGINT, signal.SIGTERM):
+        with suppress(NotImplementedError, RuntimeError):
+            loop.add_signal_handler(signal_name, stop.set)
+    try:
+        database.initialize()
+        if settings.malware_scan_required and not scanner.ping():
+            raise RuntimeError("Required private malware scanner is unavailable")
+        await run_ingestion_worker(repository, storage, settings, stop, scanner)
+    finally:
+        database.close()
+
+
+def main() -> int:
+    try:
+        asyncio.run(_run_standalone())
+    except KeyboardInterrupt:
+        return 0
+    except Exception:
+        logger.exception("standalone_ingestion_worker_failed")
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

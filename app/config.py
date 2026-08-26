@@ -77,6 +77,16 @@ class Settings(BaseSettings):
     ingestion_worker_poll_seconds: float = Field(default=0.5, ge=0.1, le=30)
     ingestion_job_lease_seconds: int = Field(default=300, ge=30, le=3_600)
     ingestion_job_max_attempts: int = Field(default=3, ge=1, le=10)
+    malware_scanner_backend: Literal["disabled", "clamd"] = "disabled"
+    malware_scan_required: bool = False
+    malware_scan_timeout_seconds: float = Field(default=15.0, ge=1.0, le=120.0)
+    clamd_host: str = Field(default="127.0.0.1", min_length=1, max_length=253)
+    clamd_port: int = Field(default=3310, ge=1, le=65535)
+    ingestion_process_isolation_enabled: bool = False
+    ingestion_extraction_timeout_seconds: float = Field(default=120.0, ge=1.0, le=600.0)
+    ingestion_worker_memory_mb: int = Field(default=1_024, ge=256, le=8_192)
+    ingestion_worker_cpu_seconds: int = Field(default=90, ge=5, le=600)
+    ingestion_max_extracted_chars: int = Field(default=5_000_000, ge=10_000, le=20_000_000)
     rate_limit_per_minute: int = Field(default=60, ge=1, le=10_000)
     max_chunks_per_document: int = Field(default=2_000, ge=1, le=20_000)
     semantic_candidate_limit: int = Field(default=600, ge=50, le=5_000)
@@ -235,6 +245,14 @@ class Settings(BaseSettings):
         if self.env == "production" and self.s3_endpoint_url:
             if not self.s3_endpoint_url.startswith("https://"):
                 raise RuntimeError("Production S3 endpoints must use HTTPS")
+
+    def validate_ingestion_security(self) -> None:
+        if self.malware_scan_required and self.malware_scanner_backend == "disabled":
+            raise RuntimeError(
+                "Required malware scanning needs EVIDENCEDESK_MALWARE_SCANNER_BACKEND=clamd"
+            )
+        if any(character in self.clamd_host for character in "/?#@ "):
+            raise RuntimeError("ClamAV host contains invalid characters")
 
     def validate_database(self) -> None:
         if self.database_backend != "postgres":

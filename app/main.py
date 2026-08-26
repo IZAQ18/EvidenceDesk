@@ -23,6 +23,7 @@ from fastapi.responses import (
     RedirectResponse,
     StreamingResponse,
 )
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.account_export import ExportTooLarge, build_workspace_export
@@ -47,11 +48,12 @@ from app.ingestion import (
     ExtractedDocument,
     ExtractedPage,
     chunk_pages,
-    extract_upload,
     ocr_capability,
     validate_upload_bytes,
 )
 from app.ingestion_worker import run_ingestion_worker, stop_ingestion_worker
+from app.isolated_extraction import extract_in_isolated_process
+from app.malware import MalwareScanner, build_malware_scanner, malware_capability
 from app.model_gateway import ModelGateway, ModelTransport
 from app.models import (
     AccountActionOut,
@@ -175,6 +177,7 @@ def create_app(
     *,
     model_transport: ModelTransport | None = None,
     account_email_sender: AccountEmailSender | None = None,
+    malware_scanner: MalwareScanner | None = None,
 ) -> FastAPI:
     resolved_settings = settings or get_settings()
     resolved_settings.validate_model_gateway()
@@ -189,6 +192,7 @@ def create_app(
     workflow = AnswerWorkflow(repository, model_gateway)
     account_store = AccountStore(database, resolved_settings.account_session_hours)
     email_sender = account_email_sender or build_account_email_sender(resolved_settings)
+    scanner = malware_scanner or build_malware_scanner(resolved_settings)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -198,11 +202,14 @@ def create_app(
             resolved_settings.validate_auth()
             resolved_settings.validate_storage()
             resolved_settings.validate_model_gateway()
+            resolved_settings.validate_ingestion_security()
             resolved_settings.resolved_api_keys()
             database.initialize()
             if resolved_settings.seed_demo_content:
                 _seed_demo_documents(resolved_settings, repository, storage)
             capability = ocr_capability(resolved_settings)
+            if resolved_settings.malware_scan_required and not scanner.ping():
+                raise RuntimeError("Required private malware scanner is unavailable")
             logger.info(
                 "service_started environment=%s ocr_available=%s",
                 resolved_settings.env,
@@ -210,7 +217,13 @@ def create_app(
             )
             if resolved_settings.ingestion_worker_enabled:
                 worker_task = asyncio.create_task(
-                    run_ingestion_worker(repository, storage, resolved_settings, worker_stop)
+                    run_ingestion_worker(
+                        repository,
+                        storage,
+                        resolved_settings,
+                        worker_stop,
+                        scanner,
+                    )
                 )
             yield
         finally:
@@ -239,6 +252,7 @@ def create_app(
     app.state.account_store = account_store
     app.state.account_email_sender = email_sender
     app.state.model_gateway = model_gateway
+    app.state.malware_scanner = scanner
 
     def current_settings() -> Settings:
         return resolved_settings
@@ -331,6 +345,8 @@ def create_app(
             logger.warning(
                 "readiness_failed dependency=original_storage type=%s", type(exc).__name__
             )
+        if resolved_settings.malware_scan_required:
+            checks["malware_scanner"] = scanner.ping()
         ready = all(checks.values())
         return JSONResponse(
             {"status": "ready" if ready else "unavailable", "checks": checks},
@@ -1051,6 +1067,13 @@ def create_app(
     def capabilities(_: Principal = Depends(authenticate_key)) -> dict[str, object]:
         return {
             "ocr": ocr_capability(resolved_settings),
+            "malware_scanning": malware_capability(resolved_settings, scanner),
+            "ingestion_isolation": {
+                "enabled": resolved_settings.ingestion_process_isolation_enabled,
+                "timeout_seconds": resolved_settings.ingestion_extraction_timeout_seconds,
+                "memory_mb": resolved_settings.ingestion_worker_memory_mb,
+                "cpu_seconds": resolved_settings.ingestion_worker_cpu_seconds,
+            },
             "supported_files": [".txt", ".md", ".pdf"],
             "max_upload_bytes": resolved_settings.max_upload_bytes,
             "max_pdf_pages": resolved_settings.max_pdf_pages,
@@ -1096,6 +1119,10 @@ def create_app(
                 "versions",
                 "reports",
                 "durable-ingestion-jobs",
+                "quarantined-upload-staging",
+                "dead-letter-ingestion-state",
+                "optional-private-clamav-scanning",
+                "resource-limited-extraction-process",
                 "hybrid-semantic-retrieval",
                 "evidence-reranking",
                 "retrieval-quality-metrics",
@@ -1142,9 +1169,9 @@ def create_app(
         content_type = "application/pdf" if extension == ".pdf" else "text/plain"
         document_id = str(uuid4())
         job_id = str(uuid4())
-        storage_path = storage.save(
+        storage_path = storage.stage(
             principal.tenant_id,
-            document_id,
+            job_id,
             extension,
             content,
             content_type,
@@ -1265,7 +1292,28 @@ def create_app(
         ):
             raise HTTPException(status_code=404, detail="Superseded document not found")
 
-        extracted = await extract_upload(file, settings_value)
+        content = await file.read(settings_value.max_upload_bytes + 1)
+        filename, _, supplied_content_type = validate_upload_bytes(
+            file.filename, file.content_type, content, settings_value
+        )
+        try:
+            scan = await run_in_threadpool(scanner.scan, content)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="The private malware scanner is temporarily unavailable",
+            ) from exc
+        if scan.status == "infected":
+            raise HTTPException(status_code=422, detail="The upload was blocked by malware scanning")
+        if scan.status in {"skipped", "unavailable"} and settings_value.malware_scan_required:
+            raise HTTPException(status_code=503, detail="Required malware scanning did not complete")
+        extracted = await run_in_threadpool(
+            extract_in_isolated_process,
+            filename,
+            supplied_content_type,
+            content,
+            settings_value,
+        )
         chunks = chunk_pages(extracted.pages)
         if len(chunks) > settings_value.max_chunks_per_document:
             raise HTTPException(status_code=413, detail="Document creates too many chunks")

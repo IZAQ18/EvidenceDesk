@@ -15,7 +15,7 @@ the organization has not supplied enough information.
 | --- | --- | --- |
 | Account safety | Individual sign-in, verified email, recovery, revocable sessions, CSRF protection, tenant isolation | Verification/recovery, scoped invitations, and workspace switching implemented and tested; real SMTP/domain and managed-data acceptance pending |
 | Durable data | Managed PostgreSQL, private object storage, backups, restore exercise | Adapters, bounded pooling, readiness checks, guarded copy tool, restore verifier, and unapplied AWS data-plane template implemented; PostgreSQL 16 path tested in CI. Managed-resource provisioning and operator-run restore acceptance pending |
-| Ingestion | Async processing, malware scan, progress, resilient OCR and table handling | Durable jobs, visible progress, bounded retry, integrity verification, and lease recovery implemented; isolated workers, malware scanning, and advanced table extraction pending |
+| Ingestion | Async processing, malware scan, progress, resilient OCR and table handling | Quarantine/promotion, private-clamd adapter, bounded parser subprocess, standalone worker command, dead-letter visibility, progress, retry, integrity, and lease recovery implemented and tested. Live private-scanner acceptance and advanced table extraction pending |
 | Answer quality | Organization-specific gold set, >=95% retrieval success, >=98% valid citations | Hybrid local semantic retrieval, reranking, diagnostics, and an 8-case synthetic regression benchmark implemented; customer-specific held-out evaluation pending |
 | Customer AI | Server-managed provider, quotas, cost controls, no customer key required | Gateway, fallbacks, usage controls, and fake-provider tests implemented; provider/privacy acceptance and live configuration pending |
 | Billing | Hosted checkout, verified webhooks, entitlements, portal, cancellation, refunds | Verified event intake exists; entitlements pending |
@@ -68,9 +68,10 @@ The document upload path now provides:
 - document visibility only after pages and searchable chunks have been committed; and
 - PostgreSQL migration coverage plus an end-to-end job-to-citation CI path.
 
-This closes the request-timeout and invisible-progress gap for the MVP. It does not claim that
-the in-process worker is a production quarantine system. Malware scanning, parser isolation,
-SQS/ECS worker deployment, job observability, and dead-letter operations remain launch gates.
+This closes the request-timeout and invisible-progress gap for the MVP. The later secure-ingestion
+milestone adds a quarantine namespace, private-clamd adapter, resource-limited parser process,
+standalone worker entry point, and explicit quarantined/dead-letter operations. A live scanner,
+separate constrained worker service, and managed SQS/DLQ still require deployment acceptance.
 
 ## Milestone 3 evidence
 
@@ -205,3 +206,25 @@ The durable-staging acceptance seam now provides:
 No managed resources or backups were created. This closes the tooling gap, not the operational
 gate: an operator must still provision a cost-reviewed staging target, capture a baseline, restore
 RDS separately, recover a synthetic S3 version, and obtain `verified: true` before public accounts.
+
+## Milestone 10 evidence
+
+The secure-ingestion path now provides:
+
+- quarantine-first local/S3 storage and explicit copy-before-commit promotion;
+- a bounded private-clamd INSTREAM client with required/fail-closed startup and readiness modes;
+- scanning on both asynchronous and legacy synchronous upload routes;
+- a secret-scrubbed parser/OCR subprocess with wall-clock, extracted-text, POSIX CPU, memory, and
+  open-file ceilings;
+- a standalone worker command so the API task can stop consuming jobs;
+- non-retryable `quarantined` detections and an explicit database-backed `dead_letter` lane after
+  bounded attempts;
+- safe removal of quarantined staged files and admin Insights counts for pending, quarantine, and
+  dead-letter work; and
+- adversarial tests for scanner detection/outage, retry exhaustion, synchronous-route bypass,
+  storage promotion, protocol framing, secret inheritance, and isolated extraction.
+
+This completes the application seam and local evidence. The public Render pilot enables parser
+process isolation but intentionally has no private ClamAV service and must use synthetic files only.
+Live signature updates, a separately constrained task, managed SQS redrive, and an acceptance drill
+remain deployment work—not completed production experience.

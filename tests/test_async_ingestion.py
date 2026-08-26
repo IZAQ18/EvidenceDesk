@@ -94,6 +94,7 @@ def test_expired_worker_lease_is_claimed_again(tmp_path):
         db_path=tmp_path / "lease.db",
         document_store_path=tmp_path / "originals",
         ingestion_worker_enabled=False,
+        rate_limit_per_minute=10_000,
         api_keys={
             "admin-a": PrincipalConfig(
                 subject="admin-a",
