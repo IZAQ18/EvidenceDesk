@@ -19,10 +19,13 @@ A sensible first customer journey is:
 | Tier | Validation price | Purpose | Status |
 | --- | --- | --- | --- |
 | Free pilot | **$0** | Let reviewers understand the product with synthetic examples. | Available as a protected demonstration; no durable service promise. |
-| Pro | **$9/month** | Private individual library, OCR and citation-first questions, exports, and account controls. | Pricing hypothesis; guarded subscription entitlements exist in code but remain disabled pending provider and deployment acceptance. |
+| Pro | **$9/month** | Private individual library, OCR and citation-first questions, exports, and account controls. | Pricing hypothesis; guarded subscription entitlements and allowances exist in code but remain disabled on the shared pilot pending provider and durable-deployment acceptance. |
 | Founding team pilot | **$149 one time** | A 14-day guided evaluation for up to five reviewers, approved non-sensitive documents, and a written readiness report. | Planned validation offer; qualify the team and document scope before accepting payment. |
 
-Do not advertise exact quotas until the application measures usage and actually enforces them.
+The first measurable allowance hypothesis is now enforced for account workspaces: Free includes 5
+document slots and 100 question attempts per calendar month; Pro includes 100 and 2,000. Treat
+these as validation limits, not proven market-fit packaging, and revise them only from real usage
+and cost evidence. The protected shared-code Render pilot is deliberately unmanaged by these limits.
 
 The $9 Pro hypothesis is intentionally below current entry prices published by comparable document-Q&A products: [Humata lists Expert at $9.99/month](https://www.humata.ai/pricing), while [AskYourPDF lists annual-billing Premium and Pro plans at $11.99 and $14.99 per month](https://askyourpdf.com/blog/askyourpdf-research-assistant). This is a benchmark, not proof of willingness to pay. Validate it with real pilot interviews and retention data before treating it as final.
 
@@ -53,7 +56,6 @@ Before enabling live checkout, still add:
 - provision and acceptance-test the existing PostgreSQL and private object-storage adapters;
 - deploy and acceptance-test the existing account and tenant ownership flows;
 - configure the approved provider product, variant, webhook, customer portal, and live test purchase;
-- enforce plan-specific document/model allowances and display usage to customers;
 - terms, privacy notice, refund/cancellation policy, and support contact;
 - backups, monitoring, abuse limits, and a data-deletion process;
 - local legal and tax advice appropriate to the developer's business.

@@ -98,8 +98,9 @@ from app.pilot import (
     pilot_cookie_value,
     pilot_principal,
 )
+from app.plans import PlanPolicy, policy_for
 from app.public_site import public_page
-from app.repository import DuplicateDocumentError, Repository
+from app.repository import DuplicateDocumentError, PlanLimitExceeded, Repository
 from app.security import (
     authenticate_key,
     enforce_rate_limit,
@@ -264,6 +265,24 @@ def create_app(
         return resolved_settings
 
     app.dependency_overrides[get_settings] = current_settings
+
+    def principal_plan_policy(principal: Principal) -> PlanPolicy:
+        return policy_for(repository.workspace_plan(principal.tenant_id))
+
+    def plan_limit_response(resource: str, limit: int) -> HTTPException:
+        label = "documents" if resource == "document" else "questions this month"
+        return HTTPException(
+            status_code=429,
+            detail={
+                "code": "plan_limit_reached",
+                "message": f"Your current plan includes up to {limit:,} {label}.",
+                "action": (
+                    "Delete an unneeded document or upgrade the workspace."
+                    if resource == "document"
+                    else "Upgrade the workspace or wait for the next monthly period."
+                ),
+            },
+        )
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
@@ -1059,6 +1078,11 @@ def create_app(
         )
         return RedirectResponse(target, status_code=303)
 
+    @app.get("/v1/account/usage", dependencies=[Depends(enforce_rate_limit)])
+    def account_usage(principal: Principal = Depends(authenticate_key)) -> dict:
+        policy = principal_plan_policy(principal)
+        return repository.workspace_usage(principal, policy)
+
     @app.post("/v1/payments/webhook", include_in_schema=False)
     async def payment_webhook(request: Request) -> dict[str, bool]:
         configured_secret = resolved_settings.payment_webhook_secret
@@ -1100,7 +1124,8 @@ def create_app(
         }
 
     @app.get("/v1/capabilities", dependencies=[Depends(enforce_rate_limit)])
-    def capabilities(_: Principal = Depends(authenticate_key)) -> dict[str, object]:
+    def capabilities(principal: Principal = Depends(authenticate_key)) -> dict[str, object]:
+        policy = principal_plan_policy(principal)
         return {
             "ocr": ocr_capability(resolved_settings),
             "malware_scanning": malware_capability(resolved_settings, scanner),
@@ -1146,6 +1171,13 @@ def create_app(
                 "daily_cost_limit_cents": resolved_settings.model_daily_cost_limit_cents,
             },
             "auth_mode": resolved_settings.auth_mode,
+            "plan": {
+                "key": policy.key,
+                "name": policy.name,
+                "managed": policy.managed,
+                "document_limit": policy.document_limit,
+                "monthly_answer_limit": policy.monthly_answer_limit,
+            },
             "features": [
                 "page-evidence",
                 "original-preview",
@@ -1203,6 +1235,7 @@ def create_app(
             file.filename, file.content_type, content, settings_value
         )
         content_type = "application/pdf" if extension == ".pdf" else "text/plain"
+        policy = principal_plan_policy(principal)
         document_id = str(uuid4())
         job_id = str(uuid4())
         storage_path = storage.stage(
@@ -1230,7 +1263,11 @@ def create_app(
                 storage_path=storage_path,
                 principal=principal,
                 max_attempts=settings_value.ingestion_job_max_attempts,
+                document_limit=policy.document_limit,
             )
+        except PlanLimitExceeded as exc:
+            storage.delete(storage_path)
+            raise plan_limit_response(exc.resource, exc.limit) from exc
         except Exception:
             storage.delete(storage_path)
             raise
@@ -1329,6 +1366,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="Superseded document not found")
 
         content = await file.read(settings_value.max_upload_bytes + 1)
+        policy = principal_plan_policy(principal)
         filename, _, supplied_content_type = validate_upload_bytes(
             file.filename, file.content_type, content, settings_value
         )
@@ -1376,7 +1414,11 @@ def create_app(
                 effective_date=effective,
                 expires_at=expiry,
                 supersedes_document_id=supersedes_document_id,
+                document_limit=policy.document_limit,
             )
+        except PlanLimitExceeded as exc:
+            storage.delete(storage_path)
+            raise plan_limit_response(exc.resource, exc.limit) from exc
         except DuplicateDocumentError as exc:
             storage.delete(storage_path)
             raise HTTPException(
@@ -1537,6 +1579,12 @@ def create_app(
     def answer(
         payload: AnswerRequest, principal: Principal = Depends(authenticate_key)
     ) -> AnswerResponse:
+        policy = principal_plan_policy(principal)
+        if not repository.reserve_answer_allowance(
+            principal.tenant_id, policy.monthly_answer_limit
+        ):
+            assert policy.monthly_answer_limit is not None
+            raise plan_limit_response("answer", policy.monthly_answer_limit)
         document_ids = list(dict.fromkeys(payload.document_ids))
         try:
             conversation_id = repository.create_or_get_conversation(

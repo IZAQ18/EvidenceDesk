@@ -13,9 +13,11 @@
 - Original/page preview, collections, versioning, supersession, archive/restore, and bulk actions.
 - Persistent conversations, follow-ups, feedback, Markdown reports, and admin insight metrics.
 - Optional account registration, isolated workspaces, email lifecycle, invitations, exports,
-  guarded deletion, and a disabled-by-default account-bound Pro entitlement foundation.
+  guarded deletion, a disabled-by-default account-bound Pro entitlement foundation, atomic
+  Free/Pro document and monthly-question allowances, and an account usage panel.
 - API-key roles, optional OIDC/JWT validation, upload limits, security headers, rate limiting, prompt-injection flags, safe paths, and non-sensitive audit logs.
-- Automated evaluation/security tests, Docker Compose, and CI.
+- Automated evaluation/security/accessibility-structure tests, dependency auditing, Docker
+  Compose, and PostgreSQL-backed CI.
 
 ## Pilot hardening — next 2–4 weeks
 
@@ -23,9 +25,9 @@
 - Replace local originals with encrypted object storage; scan uploads asynchronously.
 - Move OCR to isolated workers; evaluate PostgreSQL/pgvector retrieval and a selected neural
   reranker against the held-out corpus.
-- Add organization-specific human-reviewed evaluation sets, tracing, backup/restore drills, and dependency/image scanning.
-- Acceptance-test the payment provider, add a customer portal and server-enforced plan allowances,
-  and complete billing operations and policy review before accepting subscription payments.
+- Add organization-specific human-reviewed evaluation sets, tracing, backup/restore drills, and container scanning.
+- Acceptance-test the payment provider, add a customer portal, and complete billing operations
+  and policy review before accepting subscription payments.
 
 ## Production readiness — organization dependent
 

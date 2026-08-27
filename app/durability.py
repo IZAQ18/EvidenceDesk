@@ -20,6 +20,8 @@ MAX_BASELINE_BYTES = 2_000_000
 PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
     "users": ("id",),
     "workspaces": ("id",),
+    "workspace_entitlements": ("provider", "provider_id"),
+    "workspace_usage_monthly": ("workspace_id", "usage_month"),
     "workspace_members": ("workspace_id", "user_id"),
     "auth_sessions": ("token_hash",),
     "account_tokens": ("token_hash",),

@@ -14,6 +14,9 @@ free Render pilot is suitable for paying customers.
    variant, workspace binding, status, and provider timestamp.
 5. A valid current subscription sets only the bound workspace to `pro`. A newer `expired` or
    `unpaid` event returns it to `free`; older and duplicate events cannot overwrite newer state.
+6. Server-side account allowances change with the stored plan: Free receives 5 document slots and
+   100 question attempts per calendar month; Pro receives 100 and 2,000. Queued uploads reserve a
+   document slot, deletion releases it, and the account panel reads the same usage ledger.
 
 `cancelled`, `past_due`, and `paused` keep access so a customer is not cut off before the provider
 subscription reaches an end state. The payment provider remains the billing source of truth.
@@ -55,11 +58,14 @@ Git, browser code, screenshots, support messages, or a public environment file.
 - Send or replay an older end-state event and confirm it cannot revoke newer access.
 - Confirm an unknown variant, altered workspace ID, altered binding, malformed timestamp, and
   invalid signature cannot grant access.
-- Confirm a newer `expired` or `unpaid` event returns the workspace to `free`.
+- Confirm a newer `expired` or `unpaid` event returns the workspace to `free` and the lower
+  allowances apply immediately without deleting existing data.
+- Confirm document and monthly-question limits cannot be bypassed by concurrent requests.
+- Confirm the account usage panel matches the server response from `/v1/account/usage`.
 - Exercise backup/restore and alerting before relying on the local entitlement record.
 
-Automated tests cover the core acceptance and refusal cases locally. Before charging customers,
-also connect the provider-hosted customer portal, enforce and display plan allowances, publish
+Automated tests cover the entitlement, allowance, usage-display structure, and refusal cases
+locally. Before charging customers, also connect the provider-hosted customer portal, publish
 terms/privacy/refund/cancellation policies, add operator alerts and reconciliation, complete live
 mobile/accessibility testing, and obtain appropriate local legal and tax advice.
 

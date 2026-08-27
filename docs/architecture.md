@@ -84,6 +84,7 @@ Archive removes a document from normal retrieval without destroying it. Permanen
 - The optional model gateway has strict mechanical support checks, but those checks are not a
   semantic-entailment proof. Customer-specific evaluation, provider privacy review, a provider-side
   budget, and human review for consequential use remain required.
-- The disabled-by-default Pro entitlement foundation is locally tested, but live provider/store
-  acceptance, customer portal, plan allowance enforcement, reconciliation, refund/cancellation
-  operations, durable deployment, and legal/tax review remain required before charging customers.
+- The disabled-by-default Pro entitlement foundation and atomic account allowances are locally
+  tested, but live provider/store acceptance, customer portal, reconciliation,
+  refund/cancellation operations, durable deployment, and legal/tax review remain required before
+  charging customers.

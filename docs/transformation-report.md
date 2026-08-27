@@ -63,11 +63,11 @@ accounts, real users, or operational acceptance.
    topology needs it.
 3. Connect a real sender domain/SMTP provider and accept verification, recovery, and invitation
    delivery; integrate the selected identity provider if organizational SSO is promised.
-4. Acceptance-test the guarded subscription entitlement foundation on durable account-mode
-   infrastructure, then add plan allowance enforcement, a customer billing portal, cancellation,
+4. Acceptance-test the guarded subscription entitlement and server-enforced allowance foundation
+   on durable account-mode infrastructure, then add a customer billing portal, cancellation,
    refund/support workflows, tax/legal review, and international payout acceptance. Implemented
    code alone is not billing completion.
-5. Add centralized logs, error tracking, metrics, alerts, dependency/container scanning, incident
+5. Add centralized logs, error tracking, metrics, alerts, container scanning, incident
    response, retention/privacy/terms documents, subprocessors, and an operator support process.
 6. Run accessibility, mobile-browser, load, abuse, and customer-specific held-out answer-quality
    acceptance with real consenting pilot users and approved non-sensitive documents.

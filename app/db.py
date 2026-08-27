@@ -179,6 +179,14 @@ CREATE TABLE IF NOT EXISTS workspace_entitlements (
 CREATE INDEX IF NOT EXISTS idx_workspace_entitlements_workspace
     ON workspace_entitlements(workspace_id, plan);
 
+CREATE TABLE IF NOT EXISTS workspace_usage_monthly (
+    workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    usage_month TEXT NOT NULL,
+    answer_count INTEGER NOT NULL DEFAULT 0 CHECK (answer_count >= 0),
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(workspace_id, usage_month)
+);
+
 CREATE TABLE IF NOT EXISTS workspace_members (
     workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -625,6 +633,18 @@ POSTGRES_MIGRATIONS: tuple[tuple[int, tuple[str, ...]], ...] = (
             )""",
             """CREATE INDEX IF NOT EXISTS idx_workspace_entitlements_workspace
                ON workspace_entitlements(workspace_id, plan)""",
+        ),
+    ),
+    (
+        9,
+        (
+            """CREATE TABLE IF NOT EXISTS workspace_usage_monthly (
+                workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+                usage_month TEXT NOT NULL,
+                answer_count INTEGER NOT NULL DEFAULT 0 CHECK (answer_count >= 0),
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(workspace_id, usage_month)
+            )""",
         ),
     ),
 )

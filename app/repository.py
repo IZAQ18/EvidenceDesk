@@ -12,6 +12,7 @@ from app.db import DatabaseLike
 from app.ingestion import ExtractedDocument, TextChunk, has_injection_language
 from app.models import Principal, RetrievalSummary
 from app.payments import EntitlementDecision, PaymentEvent
+from app.plans import PlanPolicy, allowance
 from app.retrieval import (
     STOP_WORDS,
     expanded_query_terms,
@@ -59,6 +60,13 @@ class DuplicateDocumentError(Exception):
     pass
 
 
+class PlanLimitExceeded(Exception):
+    def __init__(self, resource: str, limit: int):
+        self.resource = resource
+        self.limit = limit
+        super().__init__(f"{resource} allowance reached")
+
+
 def _now() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -74,6 +82,109 @@ class Repository:
         self.database = database
         self.semantic_candidate_limit = semantic_candidate_limit
         self.semantic_min_score = semantic_min_score
+
+    def _lock_workspace(self, connection, workspace_id: str) -> None:
+        if self.database.dialect == "postgres":
+            connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", (workspace_id,)
+            )
+        else:
+            connection.execute("BEGIN IMMEDIATE")
+
+    @staticmethod
+    def _document_slots(connection, workspace_id: str) -> int:
+        row = connection.execute(
+            """SELECT COUNT(*) count FROM (
+                   SELECT id slot_id FROM documents WHERE tenant_id = ?
+                   UNION
+                   SELECT document_id slot_id FROM ingestion_jobs
+                   WHERE tenant_id = ? AND status IN ('queued','processing')
+               ) slots""",
+            (workspace_id, workspace_id),
+        ).fetchone()
+        return int(row["count"])
+
+    def workspace_plan(self, workspace_id: str) -> str | None:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT plan FROM workspaces WHERE id = ?", (workspace_id,)
+            ).fetchone()
+        return str(row["plan"]) if row else None
+
+    def reserve_answer_allowance(self, workspace_id: str, limit: int | None) -> bool:
+        if limit is None:
+            return True
+        usage_month = datetime.now(UTC).strftime("%Y-%m")
+        now = _now()
+        with self.database.connect() as connection:
+            insert = (
+                """INSERT INTO workspace_usage_monthly(
+                       workspace_id, usage_month, answer_count, updated_at)
+                   VALUES (?, ?, 0, ?)
+                   ON CONFLICT(workspace_id, usage_month) DO NOTHING"""
+                if self.database.dialect == "postgres"
+                else """INSERT OR IGNORE INTO workspace_usage_monthly(
+                       workspace_id, usage_month, answer_count, updated_at)
+                   VALUES (?, ?, 0, ?)"""
+            )
+            connection.execute(insert, (workspace_id, usage_month, now))
+            cursor = connection.execute(
+                """UPDATE workspace_usage_monthly
+                   SET answer_count = answer_count + 1, updated_at = ?
+                   WHERE workspace_id = ? AND usage_month = ? AND answer_count < ?""",
+                (now, workspace_id, usage_month, limit),
+            )
+            return cursor.rowcount == 1
+
+    def workspace_usage(self, principal: Principal, policy: PlanPolicy) -> dict:
+        usage_month = datetime.now(UTC).strftime("%Y-%m")
+        usage_date = datetime.now(UTC).date().isoformat()
+        with self.database.connect() as connection:
+            documents = connection.execute(
+                """SELECT COUNT(*) count, COALESCE(SUM(size_bytes), 0) storage_bytes
+                   FROM documents WHERE tenant_id = ?""",
+                (principal.tenant_id,),
+            ).fetchone()
+            pending = connection.execute(
+                """SELECT COUNT(*) count FROM ingestion_jobs
+                   WHERE tenant_id = ? AND status IN ('queued','processing')""",
+                (principal.tenant_id,),
+            ).fetchone()
+            monthly = connection.execute(
+                """SELECT answer_count, updated_at FROM workspace_usage_monthly
+                   WHERE workspace_id = ? AND usage_month = ?""",
+                (principal.tenant_id, usage_month),
+            ).fetchone()
+            model_today = connection.execute(
+                """SELECT request_count, reserved_tokens, reserved_cost_microusd
+                   FROM model_usage_daily WHERE tenant_id = ? AND usage_date = ?""",
+                (principal.tenant_id, usage_date),
+            ).fetchone()
+            # A processing job can already have created its document row. Count the
+            # shared document id once so the usage meter matches the enforced limit.
+            document_slots = self._document_slots(connection, principal.tenant_id)
+        answer_count = int(monthly["answer_count"]) if monthly else 0
+        return {
+            "managed": policy.managed,
+            "plan": policy.key,
+            "plan_name": policy.name,
+            "period": usage_month,
+            "documents": allowance(document_slots, policy.document_limit),
+            "stored_documents": int(documents["count"]),
+            "pending_documents": int(pending["count"]),
+            "storage_bytes": int(documents["storage_bytes"]),
+            "answers": allowance(answer_count, policy.monthly_answer_limit),
+            "model_today": (
+                dict(model_today)
+                if model_today
+                else {
+                    "request_count": 0,
+                    "reserved_tokens": 0,
+                    "reserved_cost_microusd": 0,
+                }
+            ),
+            "updated_at": monthly["updated_at"] if monthly else None,
+        }
 
     def audit(
         self,
@@ -118,9 +229,14 @@ class Repository:
         storage_path: str,
         principal: Principal,
         max_attempts: int,
+        document_limit: int | None = None,
     ) -> dict:
         now = _now()
         with self.database.connect() as connection:
+            if document_limit is not None:
+                self._lock_workspace(connection, principal.tenant_id)
+                if self._document_slots(connection, principal.tenant_id) >= document_limit:
+                    raise PlanLimitExceeded("document", document_limit)
             connection.execute(
                 """INSERT INTO ingestion_jobs
                    (id, document_id, tenant_id, owner_subject, owner_role,
@@ -337,11 +453,16 @@ class Repository:
         effective_date: str | None = None,
         expires_at: str | None = None,
         supersedes_document_id: str | None = None,
+        document_limit: int | None = None,
     ) -> str:
         document_id = document_id or str(uuid4())
         now = _now()
         try:
             with self.database.connect() as connection:
+                if document_limit is not None:
+                    self._lock_workspace(connection, principal.tenant_id)
+                    if self._document_slots(connection, principal.tenant_id) >= document_limit:
+                        raise PlanLimitExceeded("document", document_limit)
                 connection.execute(
                     """INSERT INTO documents
                        (id, tenant_id, filename, content_type, size_bytes, sha256, source,

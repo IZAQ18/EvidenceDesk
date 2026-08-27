@@ -144,6 +144,16 @@ def build_workspace_export(
             "payment_events": _rows(
                 connection, "SELECT * FROM payment_events WHERE tenant_id = ?", (tenant_id,)
             ),
+            "workspace_entitlements": _rows(
+                connection,
+                "SELECT * FROM workspace_entitlements WHERE workspace_id = ?",
+                (tenant_id,),
+            ),
+            "workspace_usage_monthly": _rows(
+                connection,
+                "SELECT * FROM workspace_usage_monthly WHERE workspace_id = ?",
+                (tenant_id,),
+            ),
             "missing_originals": [],
         }
     for document in payload["documents"]:

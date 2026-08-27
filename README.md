@@ -46,6 +46,7 @@ This is an intentionally honest portfolio MVP. It runs locally and demonstrates 
 - A replayable cinematic intro with an IZAQ maker reveal, progress counter, skip control, mobile composition, and reduced-motion fallback.
 - Aurora, Cobalt, and Ember accent palettes, interactive pointer light, spectrum navigation, and more expressive verified-evidence states.
 - An IZAQ portrait signature across the access gate, cinematic intro, header, and product rail.
+- Server-enforced account-mode allowances with atomic Free/Pro document slots, monthly question-attempt accounting, and customer-visible usage meters. The shared-code portfolio pilot remains outside these commercial limits.
 - A clearly labeled freemium product preview with Free, planned Pro, a founding Team pilot, and provider-hosted checkout/support links.
 - A disabled-by-default Lemon Squeezy Pro foundation: account-bound hosted checkout, HMAC webhook verification, approved-variant and live-mode checks, ordered/idempotent entitlement updates, masked customer hints, and admin-only payment notifications. Live billing is not configured or claimed.
 - A public `/about` product page for LinkedIn visitors and payment-provider review, while the document workspace remains behind the private pilot gate.
@@ -288,7 +289,7 @@ EVIDENCEDESK_PAYMENT_PRO_VARIANT_IDS=123456
 EVIDENCEDESK_PAYMENT_ENTITLEMENTS_ENABLED=true
 ```
 
-The webhook endpoint is `/v1/payments/webhook`. It verifies the provider signature before storing a minimal event and never receives card or MCB account details. When the guarded Pro integration is explicitly enabled, only a live approved subscription carrying a valid server-generated workspace binding can update that workspace's plan. Stale, test-mode, unknown-variant, malformed, and unbound events cannot grant access. This is an entitlement foundation, not complete billing: provider acceptance, a customer portal, enforced product allowances, policies, refunds, durable deployment, and live acceptance remain gates. See the [billing runbook](docs/billing-entitlements.md) and [monetization plan](docs/monetization.md).
+The webhook endpoint is `/v1/payments/webhook`. It verifies the provider signature before storing a minimal event and never receives card or MCB account details. When the guarded Pro integration is explicitly enabled, only a live approved subscription carrying a valid server-generated workspace binding can update that workspace's plan. Stale, test-mode, unknown-variant, malformed, and unbound events cannot grant access. Free account workspaces are limited to 5 document slots and 100 question attempts per calendar month; Pro workspaces receive 100 and 2,000. The checks are atomic and server-side, while the account panel displays the same usage state. This is still not complete billing: provider acceptance, a customer portal, policies, refunds, durable deployment, and live acceptance remain gates. See the [billing runbook](docs/billing-entitlements.md) and [monetization plan](docs/monetization.md).
 
 The public marketing and provider-review URL is `/about`. It describes the product, plans, honest limitations, privacy boundary, and payment/refund status without exposing the protected workspace. Use the full deployed `https://...onrender.com/about` address in LinkedIn and payment-provider onboarding.
 

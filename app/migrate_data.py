@@ -17,6 +17,8 @@ from app.storage import LocalDocumentStorage, S3DocumentStorage
 TABLE_ORDER = (
     "users",
     "workspaces",
+    "workspace_entitlements",
+    "workspace_usage_monthly",
     "workspace_members",
     "auth_sessions",
     "account_tokens",
