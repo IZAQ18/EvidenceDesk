@@ -42,8 +42,10 @@ def access_page(error: str | None = None) -> str:
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow,noarchive"><title>EvidenceDesk · Private pilot</title>
+<link rel="icon" href="/logo.svg" type="image/svg+xml">
 <style>
 :root{{--mint:#79f2bf;--gold:#ffc568;--ink:#f5fff9;--muted:#9db3a8}}
+.kicker{{display:flex!important;align-items:center;gap:12px}}.kicker:before{{content:"";width:46px;height:46px;flex:0 0 46px;border-radius:13px;background:url('/logo.svg') center/contain no-repeat;box-shadow:0 12px 36px #0008}}
 *{{box-sizing:border-box}}body{{margin:0;min-height:100vh;display:grid;place-items:center;padding:28px 0;background:#030806;color:var(--ink);font-family:Inter,"Segoe UI",system-ui,sans-serif;overflow:auto}}
 body:before{{content:"";position:fixed;inset:0;background:linear-gradient(90deg,rgba(0,0,0,.9),rgba(0,0,0,.3)),url('/pilot-background.png') center/cover;filter:saturate(.85);transform:scale(1.02)}}
 body:after{{content:"";position:fixed;inset:0;background-image:linear-gradient(#ffffff0a 1px,transparent 1px),linear-gradient(90deg,#ffffff08 1px,transparent 1px);background-size:48px 48px;mask-image:linear-gradient(115deg,#000,transparent 76%)}}

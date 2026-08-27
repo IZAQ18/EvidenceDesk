@@ -294,6 +294,7 @@ def create_app(
             "/ready",
             "/robots.txt",
             "/social-card.png",
+            "/logo.svg",
             "/pilot-background.png",
             "/developer-signature.png",
             "/access",
@@ -397,6 +398,13 @@ def create_app(
         return FileResponse(
             Path(__file__).parent / "assets" / "evidencedesk-social-card.png",
             media_type="image/png",
+        )
+
+    @app.get("/logo.svg", include_in_schema=False)
+    def logo() -> FileResponse:
+        return FileResponse(
+            Path(__file__).parent / "assets" / "evidencedesk-mark.svg",
+            media_type="image/svg+xml",
         )
 
     @app.get("/pilot-background.png", include_in_schema=False)

@@ -256,7 +256,14 @@ def validate_upload_bytes(
     if not content:
         raise HTTPException(status_code=400, detail="The uploaded file is empty")
     if len(content) > settings.max_upload_bytes:
-        raise HTTPException(status_code=413, detail="The uploaded file exceeds the size limit")
+        limit_mb = settings.max_upload_bytes / (1024 * 1024)
+        raise HTTPException(
+            status_code=413,
+            detail={
+                "message": f"This file exceeds the {limit_mb:g} MB upload limit.",
+                "action": "Compress the PDF or split it into smaller parts, then try again.",
+            },
+        )
     if extension == ".pdf" and not content.startswith(b"%PDF-"):
         raise HTTPException(status_code=415, detail="The file does not have a valid PDF signature")
     return filename, extension, content_type

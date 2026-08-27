@@ -34,6 +34,7 @@ def test_protected_pilot_gate_and_seeded_content(tmp_path):
         assert "Ahsan Maqbool Ahmad" in public_site.text
         assert "PK58 MUCB 1160 9811 3100 4752" in public_site.text
         assert "Muhammad Qasim Ayub" in public_site.text
+        assert "/logo.svg" in public_site.text
         assert "PK83 NAYA 1234 5030 6196 1996" in public_site.text
         assert "passed the standard IBAN checksum" in public_site.text
         assert "$9" in public_site.text
@@ -74,6 +75,8 @@ def test_protected_pilot_gate_and_seeded_content(tmp_path):
         assert "supportDock" in workspace.text
         assert "40% pledged to charitable giving" in workspace.text
         assert "/developer-signature.png" in workspace.text
+        assert "/logo.svg" in workspace.text
+        assert "Maximum file size" in workspace.text
         assert "Ahsan Maqbool Ahmad" in workspace.text
         assert "Muhammad Qasim Ayub" in workspace.text
         assert "const PILOT_MODE=true" in workspace.text
@@ -95,6 +98,9 @@ def test_protected_pilot_gate_and_seeded_content(tmp_path):
         developer_signature = client.get("/developer-signature.png")
         assert developer_signature.status_code == 200
         assert developer_signature.headers["content-type"] == "image/png"
+        logo = client.get("/logo.svg")
+        assert logo.status_code == 200
+        assert logo.headers["content-type"] == "image/svg+xml"
 
 
 def test_support_link_is_https_and_injected_as_data(tmp_path):

@@ -120,7 +120,7 @@ def build_fastspring_checkout_page(
     session_json = json.dumps(session, separators=(",", ":")).replace("<", "\\u003c")
     safe_storefront = escape(storefront_url, quote=True)
     return f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="/logo.svg" type="image/svg+xml">
 <title>Opening EvidenceDesk checkout</title><style>
 body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#080b11;color:#e8eef8;font:16px system-ui,sans-serif}}
 main{{max-width:520px;padding:32px;text-align:center}}button{{border:0;border-radius:12px;padding:13px 18px;background:#4f8cff;color:white;font-weight:700;cursor:pointer}}

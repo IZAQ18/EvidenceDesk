@@ -91,3 +91,9 @@ def test_active_ingestion_jobs_keep_refreshing_after_the_initial_upload_watch():
     assert "async function pollActiveJobs()" in UI_HTML
     assert "setInterval(pollActiveJobs,5000)" in UI_HTML
     assert "Worker heartbeat is delayed" in UI_HTML
+
+
+def test_upload_limit_is_explained_before_sending_a_large_file():
+    assert "uploadLimitBytes=0" in UI_HTML
+    assert "caps.max_upload_bytes" in UI_HTML
+    assert "Compress the PDF or split it into smaller parts" in UI_HTML

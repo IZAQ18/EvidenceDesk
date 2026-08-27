@@ -40,7 +40,8 @@ services:
       - key: EVIDENCEDESK_RATE_LIMIT_PER_MINUTE
         value: "30"
       - key: EVIDENCEDESK_MAX_UPLOAD_BYTES
-        value: "5000000"
+        # 15 MiB: enough for practical pilot PDFs without overwhelming the free worker.
+        value: "15728640"
       - key: EVIDENCEDESK_MAX_PDF_PAGES
         value: "40"
       - key: EVIDENCEDESK_OCR_MAX_PAGES
