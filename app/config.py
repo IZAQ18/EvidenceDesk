@@ -86,6 +86,7 @@ class Settings(BaseSettings):
     ingestion_extraction_timeout_seconds: float = Field(default=120.0, ge=1.0, le=600.0)
     ingestion_worker_memory_mb: int = Field(default=1_024, ge=256, le=8_192)
     ingestion_worker_cpu_seconds: int = Field(default=90, ge=5, le=600)
+    ingestion_worker_nice_level: int = Field(default=10, ge=0, le=19)
     ingestion_max_extracted_chars: int = Field(default=5_000_000, ge=10_000, le=20_000_000)
     rate_limit_per_minute: int = Field(default=60, ge=1, le=10_000)
     max_chunks_per_document: int = Field(default=2_000, ge=1, le=20_000)

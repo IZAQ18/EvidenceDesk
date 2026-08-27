@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from contextlib import suppress
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -13,6 +14,37 @@ from app.config import Settings
 from app.ingestion import ExtractedDocument, ExtractedPage, extract_bytes
 
 _MAX_ERROR_BYTES = 64_000
+
+
+def _run_bounded_process(
+    command: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    timeout_seconds: float,
+    nice_level: int,
+) -> int:
+    """Run extraction below the web process priority and always reap it."""
+    creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+    process = subprocess.Popen(  # noqa: S603 - fixed interpreter and internal arguments
+        command,
+        cwd=cwd,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=creation_flags,
+    )
+    if os.name != "nt" and nice_level and hasattr(os, "setpriority"):
+        with suppress(OSError, PermissionError):
+            os.setpriority(os.PRIO_PROCESS, process.pid, nice_level)
+    try:
+        return process.wait(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        with suppress(Exception):
+            process.wait(timeout=5)
+        raise
 
 
 def _runner_environment() -> dict[str, str]:
@@ -89,18 +121,13 @@ def extract_in_isolated_process(
             str(settings.ingestion_worker_cpu_seconds),
             str(settings.ingestion_max_extracted_chars),
         ]
-        creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
         try:
-            completed = subprocess.run(
+            returncode = _run_bounded_process(
                 command,
                 cwd=Path(__file__).resolve().parent.parent,
                 env=_runner_environment(),
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=settings.ingestion_extraction_timeout_seconds,
-                check=False,
-                creationflags=creation_flags,
+                timeout_seconds=settings.ingestion_extraction_timeout_seconds,
+                nice_level=settings.ingestion_worker_nice_level,
             )
         except subprocess.TimeoutExpired as exc:
             raise HTTPException(
@@ -126,7 +153,7 @@ def extract_in_isolated_process(
             response = json.loads(response_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise HTTPException(status_code=422, detail="Isolated extraction response was invalid") from exc
-        if completed.returncode != 0 or not response.get("ok"):
+        if returncode != 0 or not response.get("ok"):
             raise HTTPException(
                 status_code=int(response.get("status_code") or 422),
                 detail=response.get("detail") or "The document could not be safely extracted",

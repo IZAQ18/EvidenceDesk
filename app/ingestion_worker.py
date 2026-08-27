@@ -63,6 +63,13 @@ def process_ingestion_job(
 ) -> None:
     principal = _principal(job)
     promoted_reference: str | None = None
+    logger.info(
+        "ingestion_job_started job_id=%s filename=%s attempt=%s size_bytes=%s",
+        job["id"],
+        job["filename"],
+        job["attempts"],
+        job["size_bytes"],
+    )
     try:
         existing = repository.get_document(job["document_id"], principal)
         if existing:
@@ -195,6 +202,12 @@ def process_ingestion_job(
             raise
         repository.finish_ingestion_job(job["id"], worker_id, promoted_reference)
         storage.delete(job["storage_path"])
+        logger.info(
+            "ingestion_job_ready job_id=%s pages=%s method=%s",
+            job["id"],
+            extracted.page_count,
+            extracted.extraction_method,
+        )
         repository.audit(
             principal,
             "document_ingested_async",
@@ -208,6 +221,7 @@ def process_ingestion_job(
             },
         )
     except DuplicateDocumentError:
+        logger.warning("ingestion_job_duplicate job_id=%s", job["id"])
         repository.fail_ingestion_job(
             job["id"],
             worker_id,
@@ -218,6 +232,12 @@ def process_ingestion_job(
         )
     except HTTPException as exc:
         code, message, action = _error_detail(exc)
+        logger.warning(
+            "ingestion_job_rejected job_id=%s code=%s message=%s",
+            job["id"],
+            code,
+            message,
+        )
         repository.fail_ingestion_job(
             job["id"], worker_id, code=code, message=message, action=action
         )

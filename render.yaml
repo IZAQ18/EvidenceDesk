@@ -45,12 +45,20 @@ services:
         value: "40"
       - key: EVIDENCEDESK_OCR_MAX_PAGES
         value: "10"
+      - key: EVIDENCEDESK_OCR_DPI
+        value: "150"
+      - key: EVIDENCEDESK_INGESTION_JOB_LEASE_SECONDS
+        value: "120"
       - key: EVIDENCEDESK_INGESTION_PROCESS_ISOLATION_ENABLED
         value: "true"
       - key: EVIDENCEDESK_INGESTION_EXTRACTION_TIMEOUT_SECONDS
-        value: "90"
+        value: "75"
       - key: EVIDENCEDESK_INGESTION_WORKER_MEMORY_MB
-        value: "384"
+        value: "320"
+      - key: EVIDENCEDESK_INGESTION_WORKER_CPU_SECONDS
+        value: "60"
+      - key: EVIDENCEDESK_INGESTION_WORKER_NICE_LEVEL
+        value: "15"
       # This public synthetic pilot has no private ClamAV service. Do not call it malware-scanned.
       - key: EVIDENCEDESK_MALWARE_SCANNER_BACKEND
         value: disabled

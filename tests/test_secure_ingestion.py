@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import os
+import subprocess
 import time
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.config import PrincipalConfig, Settings
-from app.isolated_extraction import _runner_environment, extract_in_isolated_process
+from app.isolated_extraction import (
+    _run_bounded_process,
+    _runner_environment,
+    extract_in_isolated_process,
+)
 from app.main import create_app
 from app.malware import ScanResult
 from tests.conftest import auth
@@ -156,3 +163,85 @@ def test_extraction_process_is_bounded_and_does_not_inherit_application_secrets(
     extracted = extract_in_isolated_process("isolated.txt", "text/plain", content, settings)
     assert extracted.text == content.decode()
     assert extracted.extraction_method == "plain-text"
+
+
+def test_bounded_extraction_process_is_deprioritized_and_reaped(monkeypatch, tmp_path):
+    class Process:
+        pid = 4321
+
+        def __init__(self):
+            self.waited: list[float] = []
+            self.killed = False
+
+        def wait(self, timeout):
+            self.waited.append(timeout)
+            return 0
+
+        def kill(self):
+            self.killed = True
+
+    process = Process()
+    captured: dict[str, object] = {}
+
+    def popen(command, **kwargs):
+        captured["command"] = command
+        captured.update(kwargs)
+        return process
+
+    priorities: list[tuple[int, int, int]] = []
+    monkeypatch.setattr("app.isolated_extraction.subprocess.Popen", popen)
+    if os.name != "nt":
+        monkeypatch.setattr(
+            "app.isolated_extraction.os.setpriority",
+            lambda which, pid, priority: priorities.append((which, pid, priority)),
+        )
+
+    result = _run_bounded_process(
+        ["python", "worker.py"],
+        cwd=tmp_path,
+        env={"PATH": "safe"},
+        timeout_seconds=7,
+        nice_level=15,
+    )
+
+    assert result == 0
+    assert process.waited == [7]
+    assert process.killed is False
+    assert captured["stdin"] is subprocess.DEVNULL
+    if os.name != "nt":
+        assert priorities == [(os.PRIO_PROCESS, 4321, 15)]
+
+
+def test_bounded_extraction_process_kills_timeout(monkeypatch, tmp_path):
+    class Process:
+        pid = 4321
+
+        def __init__(self):
+            self.wait_count = 0
+            self.killed = False
+
+        def wait(self, timeout):
+            self.wait_count += 1
+            if self.wait_count == 1:
+                raise subprocess.TimeoutExpired("worker", timeout)
+            return -9
+
+        def kill(self):
+            self.killed = True
+
+    process = Process()
+    monkeypatch.setattr(
+        "app.isolated_extraction.subprocess.Popen", lambda *_args, **_kwargs: process
+    )
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        _run_bounded_process(
+            ["python", "worker.py"],
+            cwd=tmp_path,
+            env={},
+            timeout_seconds=2,
+            nice_level=0,
+        )
+
+    assert process.killed is True
+    assert process.wait_count == 2

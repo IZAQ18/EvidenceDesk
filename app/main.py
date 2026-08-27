@@ -349,12 +349,9 @@ def create_app(
         return response
 
     @app.get("/health")
-    def health() -> dict[str, str]:
-        try:
-            with database.connect() as connection:
-                connection.execute("SELECT 1").fetchone()
-        except Exception as exc:
-            raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    async def health() -> dict[str, str]:
+        # Liveness must stay cheap even while a bounded OCR child is using CPU.
+        # Database and storage checks belong to /ready, not Render's kill/restart probe.
         return {"status": "ok", "service": "evidencedesk", "version": "1.0.0"}
 
     @app.get("/ready")
