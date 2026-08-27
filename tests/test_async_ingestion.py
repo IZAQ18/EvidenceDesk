@@ -140,6 +140,9 @@ def test_worker_recovers_after_a_temporary_claim_error(tmp_path):
         def __init__(self):
             self.calls = 0
 
+        def expire_exhausted_ingestion_jobs(self):
+            return 0
+
         def claim_ingestion_job(self, worker_id, lease_seconds):
             self.calls += 1
             if self.calls == 1:
@@ -167,3 +170,52 @@ def test_worker_recovers_after_a_temporary_claim_error(tmp_path):
     )
 
     assert repository.calls == 2
+
+
+def test_expired_final_attempt_becomes_an_actionable_dead_letter(tmp_path):
+    settings = Settings(
+        _env_file=None,
+        env="test",
+        db_path=tmp_path / "exhausted.db",
+        document_store_path=tmp_path / "originals",
+        ingestion_worker_enabled=False,
+        ingestion_job_max_attempts=1,
+        rate_limit_per_minute=10_000,
+        api_keys={
+            "admin-a": PrincipalConfig(
+                subject="admin-a",
+                tenant_id="tenant-a",
+                role="admin",
+                clearances=["public", "internal", "confidential"],
+            )
+        },
+    )
+    app = create_app(settings)
+    with TestClient(app) as client:
+        queued = client.post(
+            "/v1/ingestion-jobs",
+            headers=auth(),
+            files={
+                "file": (
+                    "scan.txt",
+                    b"This staged evidence has enough words to exercise interrupted job recovery.",
+                    "text/plain",
+                )
+            },
+        ).json()
+        assert "Queued for secure validation" in queued["detail"]
+        repository = app.state.repository
+        claimed = repository.claim_ingestion_job("lost-worker", lease_seconds=30)
+        assert claimed and claimed["attempts"] == 1
+        with repository.database.connect() as connection:
+            connection.execute(
+                "UPDATE ingestion_jobs SET lease_expires_at = ? WHERE id = ?",
+                ("2000-01-01T00:00:00+00:00", queued["id"]),
+            )
+
+        assert repository.expire_exhausted_ingestion_jobs() == 1
+        failed = client.get(f"/v1/ingestion-jobs/{queued['id']}", headers=auth()).json()
+        assert failed["status"] == "failed"
+        assert failed["stage"] == "dead_letter"
+        assert failed["error_code"] == "worker_interrupted"
+        assert "searchable PDF" in failed["error_action"]

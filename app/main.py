@@ -1182,9 +1182,10 @@ def create_app(
             "malware_scanning": malware_capability(resolved_settings, scanner),
             "ingestion_isolation": {
                 "enabled": resolved_settings.ingestion_process_isolation_enabled,
-                "timeout_seconds": resolved_settings.ingestion_extraction_timeout_seconds,
+                "timeout_seconds": resolved_settings.effective_extraction_timeout_seconds(),
                 "memory_mb": resolved_settings.ingestion_worker_memory_mb,
-                "cpu_seconds": resolved_settings.ingestion_worker_cpu_seconds,
+                "cpu_seconds": resolved_settings.effective_worker_cpu_seconds(),
+                "constrained_profile": resolved_settings.constrained_ingestion_profile(),
             },
             "supported_files": [".txt", ".md", ".pdf"],
             "max_upload_bytes": resolved_settings.max_upload_bytes,

@@ -104,7 +104,10 @@ def ocr_capability(settings: Settings) -> dict[str, object]:
     tessdata = _find_tessdata(settings)
     available = settings.ocr_enabled and pymupdf_available and tessdata is not None
     if available:
-        detail = f"OCR ready for {settings.ocr_languages} documents."
+        detail = (
+            f"OCR ready for {settings.ocr_languages} documents, up to "
+            f"{settings.effective_ocr_max_pages()} image-heavy pages per file."
+        )
     elif not settings.ocr_enabled:
         detail = "OCR is disabled by configuration."
     elif not pymupdf_available:
@@ -116,7 +119,9 @@ def ocr_capability(settings: Settings) -> dict[str, object]:
         "enabled": settings.ocr_enabled,
         "engine": "PyMuPDF + Tesseract",
         "languages": settings.ocr_languages,
-        "max_pages": settings.ocr_max_pages,
+        "max_pages": settings.effective_ocr_max_pages(),
+        "dpi": settings.effective_ocr_dpi(),
+        "constrained_profile": settings.constrained_ingestion_profile(),
         "detail": detail,
     }
 
@@ -177,20 +182,27 @@ def _extract_pdf(content: bytes, settings: Settings) -> tuple[list[ExtractedPage
         ocr_indexes: set[int] = set()
         tessdata = _find_tessdata(settings)
         if weak_indexes and settings.ocr_enabled and tessdata:
-            if len(weak_indexes) > settings.ocr_max_pages:
+            ocr_page_limit = settings.effective_ocr_max_pages()
+            if len(weak_indexes) > ocr_page_limit:
                 raise HTTPException(
                     status_code=413,
-                    detail=(
-                        f"PDF needs OCR on {len(weak_indexes)} pages; the safety limit is "
-                        f"{settings.ocr_max_pages}. Split the document or raise the configured limit."
-                    ),
+                    detail={
+                        "code": "ocr_page_limit",
+                        "message": (
+                            f"This PDF needs OCR on {len(weak_indexes)} pages, but this "
+                            f"deployment safely handles {ocr_page_limit} image-heavy pages per file."
+                        ),
+                        "action": (
+                            "Upload a searchable PDF, or split the scanned document into smaller parts."
+                        ),
+                    },
                 )
             for index in weak_indexes:
                 page = document[index]
                 try:
                     text_page = page.get_textpage_ocr(
                         language=settings.ocr_languages,
-                        dpi=settings.ocr_dpi,
+                        dpi=settings.effective_ocr_dpi(),
                         full=True,
                         tessdata=str(tessdata),
                     )

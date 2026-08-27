@@ -101,6 +101,8 @@ def test_protected_pilot_gate_and_seeded_content(tmp_path):
         logo = client.get("/logo.svg")
         assert logo.status_code == 200
         assert logo.headers["content-type"] == "image/svg+xml"
+        assert "citation brackets" in logo.text
+        assert "linearGradient" in logo.text
 
 
 def test_support_link_is_https_and_injected_as_data(tmp_path):

@@ -94,3 +94,39 @@ def test_scanned_pdf_has_actionable_error_when_ocr_adapter_is_missing(
     assert error.value.status_code == 422
     assert error.value.detail["code"] == "ocr_unavailable"
     assert "searchable PDF" in error.value.detail["action"]
+
+
+def test_constrained_worker_rejects_large_ocr_workload_before_processing(
+    monkeypatch, tmp_path
+):
+    tessdata = tmp_path / "tessdata"
+    tessdata.mkdir()
+    (tessdata / "eng.traineddata").write_bytes(b"test-model")
+    document = FakeDocument()
+    document.pages = [FakePage() for _ in range(5)]
+    document.page_count = len(document.pages)
+    monkeypatch.setitem(sys.modules, "pymupdf", SimpleNamespace(open=lambda **_kwargs: document))
+    settings = Settings(
+        _env_file=None,
+        env="test",
+        db_path=tmp_path / "test.db",
+        tessdata_path=tessdata,
+        ingestion_process_isolation_enabled=True,
+        ingestion_worker_memory_mb=320,
+        ingestion_extraction_timeout_seconds=75,
+        ingestion_worker_cpu_seconds=60,
+        ocr_dpi=150,
+        ocr_max_pages=10,
+    )
+
+    assert settings.effective_ocr_dpi() == 110
+    assert settings.effective_ocr_max_pages() == 4
+    assert settings.effective_extraction_timeout_seconds() == 40
+    assert settings.effective_worker_cpu_seconds() == 35
+    with pytest.raises(HTTPException) as error:
+        _extract_pdf(b"%PDF-fake", settings)
+
+    assert error.value.status_code == 413
+    assert error.value.detail["code"] == "ocr_page_limit"
+    assert "searchable PDF" in error.value.detail["action"]
+    assert document.closed is True

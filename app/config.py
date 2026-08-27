@@ -178,6 +178,37 @@ class Settings(BaseSettings):
             return {item for item in values if item.isdigit()}
         return {item for item in values if re.fullmatch(r"[A-Za-z0-9_-]{1,100}", item)}
 
+    def constrained_ingestion_profile(self) -> bool:
+        """Use a health-preserving OCR budget on small isolated workers."""
+        return (
+            self.ingestion_process_isolation_enabled
+            and self.ingestion_worker_memory_mb <= 384
+        )
+
+    def effective_ocr_dpi(self) -> int:
+        return min(self.ocr_dpi, 110) if self.constrained_ingestion_profile() else self.ocr_dpi
+
+    def effective_ocr_max_pages(self) -> int:
+        return (
+            min(self.ocr_max_pages, 4)
+            if self.constrained_ingestion_profile()
+            else self.ocr_max_pages
+        )
+
+    def effective_extraction_timeout_seconds(self) -> float:
+        return (
+            min(self.ingestion_extraction_timeout_seconds, 40.0)
+            if self.constrained_ingestion_profile()
+            else self.ingestion_extraction_timeout_seconds
+        )
+
+    def effective_worker_cpu_seconds(self) -> int:
+        return (
+            min(self.ingestion_worker_cpu_seconds, 35)
+            if self.constrained_ingestion_profile()
+            else self.ingestion_worker_cpu_seconds
+        )
+
     @model_validator(mode="after")
     def validate_payment_entitlements(self) -> Settings:
         if not self.payment_entitlements_enabled:

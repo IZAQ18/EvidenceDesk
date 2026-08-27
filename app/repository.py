@@ -265,13 +265,37 @@ class Repository:
                     expires_at,
                     supersedes_document_id,
                     storage_path,
-                    "Upload isolated in quarantine. Waiting for security scanning.",
+                    "Upload isolated in the protected staging area. Queued for secure validation.",
                     max_attempts,
                     now,
                     now,
                 ),
             )
         return self.get_ingestion_job(job_id, principal) or {}
+
+    def expire_exhausted_ingestion_jobs(self) -> int:
+        """Turn interrupted final attempts into an actionable terminal state."""
+        now = _now()
+        message = "Document processing was interrupted before the final attempt completed."
+        with self.database.connect() as connection:
+            cursor = connection.execute(
+                """UPDATE ingestion_jobs
+                   SET status = 'failed', stage = 'dead_letter', progress = 100,
+                       detail = ?, error_code = 'worker_interrupted', error_message = ?,
+                       error_action = ?, worker_id = NULL, lease_expires_at = NULL,
+                       updated_at = ?, finished_at = ?
+                   WHERE status = 'processing' AND attempts >= max_attempts
+                     AND lease_expires_at IS NOT NULL AND lease_expires_at < ?""",
+                (
+                    message,
+                    message,
+                    "Upload a searchable PDF or split a scanned PDF into smaller parts, then try again.",
+                    now,
+                    now,
+                    now,
+                ),
+            )
+            return cursor.rowcount
 
     def claim_ingestion_job(self, worker_id: str, lease_seconds: int) -> dict | None:
         now = _now()
@@ -298,7 +322,7 @@ class Repository:
                          AND (status = 'queued' OR
                               (status = 'processing' AND lease_expires_at < ?))""",
                     (
-                        "Rechecking the staged file before extraction.",
+                        "Validating file type, size, integrity, and isolation controls.",
                         worker_id,
                         lease,
                         now,
@@ -411,7 +435,7 @@ class Repository:
         placeholders = ",".join("?" for _ in principal.clearances)
         query = f"""UPDATE ingestion_jobs
                     SET status = 'queued', stage = 'queued', progress = 15,
-                        detail = 'Retry requested. Waiting for an ingestion worker.',
+                        detail = 'Retry requested. Queued for secure validation.',
                         error_code = NULL, error_message = NULL, error_action = NULL,
                         worker_id = NULL, lease_expires_at = NULL, finished_at = NULL,
                         updated_at = ?

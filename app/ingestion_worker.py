@@ -91,12 +91,17 @@ def process_ingestion_job(
                 },
             )
 
+        scanner_enabled = settings.malware_scanner_backend != "disabled"
         repository.update_ingestion_job(
             job["id"],
             worker_id,
             stage="scanning",
             progress=28,
-            detail="Streaming the quarantined upload through the malware scanner.",
+            detail=(
+                "Streaming the quarantined upload through the configured malware scanner."
+                if scanner_enabled
+                else "File integrity checks passed. Preparing bounded extraction."
+            ),
             lease_seconds=settings.ingestion_job_lease_seconds,
         )
         try:
@@ -263,6 +268,11 @@ async def run_ingestion_worker(
     logger.info("ingestion_worker_started worker_id=%s", worker_id)
     while not stop.is_set():
         try:
+            exhausted = await asyncio.to_thread(repository.expire_exhausted_ingestion_jobs)
+            if exhausted:
+                logger.warning(
+                    "ingestion_jobs_exhausted worker_id=%s count=%s", worker_id, exhausted
+                )
             job = await asyncio.to_thread(
                 repository.claim_ingestion_job,
                 worker_id,

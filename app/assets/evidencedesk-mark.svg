@@ -1,25 +1,39 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
   <title id="title">EvidenceDesk</title>
-  <desc id="desc">A document and verified citation mark</desc>
+  <desc id="desc">A luminous E held inside citation brackets with a verified evidence seal</desc>
   <defs>
-    <linearGradient id="frame" x1="8" y1="7" x2="56" y2="58" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#67e8f9"/>
-      <stop offset="0.52" stop-color="#4f8cff"/>
-      <stop offset="1" stop-color="#ffc568"/>
+    <linearGradient id="shell" x1="7" y1="5" x2="58" y2="61" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0d2330"/>
+      <stop offset="0.52" stop-color="#08151f"/>
+      <stop offset="1" stop-color="#07120f"/>
     </linearGradient>
-    <linearGradient id="paper" x1="18" y1="13" x2="46" y2="51" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#f8fbff"/>
-      <stop offset="1" stop-color="#cbd9e8"/>
+    <linearGradient id="spectrum" x1="12" y1="10" x2="53" y2="54" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6ee7f2"/>
+      <stop offset="0.48" stop-color="#568dff"/>
+      <stop offset="1" stop-color="#ffc45e"/>
     </linearGradient>
-    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
-      <feGaussianBlur stdDeviation="2.2" result="blur"/>
+    <linearGradient id="evidence" x1="20" y1="16" x2="47" y2="48" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#eafcff"/>
+      <stop offset="0.48" stop-color="#8ee8ff"/>
+      <stop offset="1" stop-color="#71e0aa"/>
+    </linearGradient>
+    <radialGradient id="aura" cx="0" cy="0" r="1" gradientTransform="translate(31 29) rotate(52) scale(35)">
+      <stop stop-color="#3c8cff" stop-opacity=".22"/>
+      <stop offset="1" stop-color="#3c8cff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="softGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="1.8" result="blur"/>
       <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
   </defs>
-  <rect x="2" y="2" width="60" height="60" rx="17" fill="#071019" stroke="url(#frame)" stroke-width="2"/>
-  <path d="M19 13.5h19l8 8V47a3.5 3.5 0 0 1-3.5 3.5h-23A3.5 3.5 0 0 1 16 47V17a3.5 3.5 0 0 1 3-3.5Z" fill="url(#paper)" opacity=".97"/>
-  <path d="M38 13.5v7.2c0 .7.6 1.3 1.3 1.3H46" fill="none" stroke="#7891ad" stroke-width="1.7"/>
-  <path d="M23 27h16M23 33h13M23 39h8" fill="none" stroke="#172b42" stroke-width="2.4" stroke-linecap="round"/>
-  <circle cx="41.5" cy="42.5" r="8.2" fill="#071019" stroke="url(#frame)" stroke-width="2" filter="url(#glow)"/>
-  <path d="m37.8 42.5 2.4 2.5 5-5.2" fill="none" stroke="#79f2bf" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="2" y="2" width="60" height="60" rx="17" fill="url(#shell)" stroke="url(#spectrum)" stroke-width="2"/>
+  <rect x="6" y="6" width="52" height="52" rx="13" fill="url(#aura)" stroke="#dffcff" stroke-opacity=".09"/>
+  <path d="M17.5 14H13a2 2 0 0 0-2 2v32a2 2 0 0 0 2 2h4.5M46.5 14H51a2 2 0 0 1 2 2v32a2 2 0 0 1-2 2h-4.5" fill="none" stroke="url(#spectrum)" stroke-width="2.6" stroke-linecap="round"/>
+  <path d="M23 18v28M23 19h20M23 31.5h16M23 45h20" fill="none" stroke="url(#evidence)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" filter="url(#softGlow)"/>
+  <circle cx="43" cy="19" r="2.4" fill="#ffc45e"/>
+  <circle cx="39" cy="31.5" r="2.4" fill="#6ee7f2"/>
+  <circle cx="43" cy="45" r="2.4" fill="#71e0aa"/>
+  <path d="M16 24h2M16 32h2M16 40h2M46 24h2M46 32h2" stroke="#dffcff" stroke-opacity=".38" stroke-width="1.6" stroke-linecap="round"/>
+  <circle cx="48" cy="48" r="9" fill="#07110e" stroke="url(#spectrum)" stroke-width="2" filter="url(#softGlow)"/>
+  <path d="m43.8 48 2.6 2.7 5.5-5.8" fill="none" stroke="#8ff0b9" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

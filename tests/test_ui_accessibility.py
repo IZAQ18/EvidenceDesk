@@ -93,7 +93,9 @@ def test_active_ingestion_jobs_keep_refreshing_after_the_initial_upload_watch():
     assert "setInterval(pollActiveJobs,10000)" in UI_HTML
     assert "setTimeout(resolve,2500)" in UI_HTML
     assert "activeJobWatches.delete(id)" in UI_HTML
-    assert "Scanned-page OCR can take about 75 seconds" in UI_HTML
+    assert "jobStageLabel(stage)" in UI_HTML
+    assert "security_check:'validating'" in UI_HTML
+    assert "Bounded OCR will stop safely" in UI_HTML
 
 
 def test_upload_limit_is_explained_before_sending_a_large_file():

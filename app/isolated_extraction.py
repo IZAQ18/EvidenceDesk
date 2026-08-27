@@ -59,7 +59,17 @@ def _runner_environment() -> dict[str, str]:
         "TESSDATA_PREFIX",
         "WINDIR",
     }
-    return {key: value for key, value in os.environ.items() if key.upper() in allowed}
+    environment = {key: value for key, value in os.environ.items() if key.upper() in allowed}
+    # Keep OCR from starving the parent web process on constrained hosts.
+    environment.update(
+        {
+            "OMP_THREAD_LIMIT": "1",
+            "OMP_NUM_THREADS": "1",
+            "OPENBLAS_NUM_THREADS": "1",
+            "MKL_NUM_THREADS": "1",
+        }
+    )
+    return environment
 
 
 def _runner_settings(settings: Settings) -> dict[str, object]:
@@ -68,8 +78,8 @@ def _runner_settings(settings: Settings) -> dict[str, object]:
         "max_pdf_pages": settings.max_pdf_pages,
         "ocr_enabled": settings.ocr_enabled,
         "ocr_languages": settings.ocr_languages,
-        "ocr_dpi": settings.ocr_dpi,
-        "ocr_max_pages": settings.ocr_max_pages,
+        "ocr_dpi": settings.effective_ocr_dpi(),
+        "ocr_max_pages": settings.effective_ocr_max_pages(),
         "ocr_min_words_per_page": settings.ocr_min_words_per_page,
         "tessdata_path": str(settings.tessdata_path) if settings.tessdata_path else None,
     }
@@ -118,7 +128,7 @@ def extract_in_isolated_process(
             str(request_path),
             str(response_path),
             str(settings.ingestion_worker_memory_mb),
-            str(settings.ingestion_worker_cpu_seconds),
+            str(settings.effective_worker_cpu_seconds()),
             str(settings.ingestion_max_extracted_chars),
         ]
         try:
@@ -126,7 +136,7 @@ def extract_in_isolated_process(
                 command,
                 cwd=Path(__file__).resolve().parent.parent,
                 env=_runner_environment(),
-                timeout_seconds=settings.ingestion_extraction_timeout_seconds,
+                timeout_seconds=settings.effective_extraction_timeout_seconds(),
                 nice_level=settings.ingestion_worker_nice_level,
             )
         except subprocess.TimeoutExpired as exc:

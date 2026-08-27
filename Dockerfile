@@ -4,6 +4,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PORT=8000 \
+    OMP_THREAD_LIMIT=1 \
+    OMP_NUM_THREADS=1 \
+    OPENBLAS_NUM_THREADS=1 \
+    MKL_NUM_THREADS=1 \
     TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata
 
 RUN addgroup --system app && adduser --system --ingroup app app

@@ -150,7 +150,10 @@ def test_extraction_process_is_bounded_and_does_not_inherit_application_secrets(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("EVIDENCEDESK_MODEL_API_KEY", "must-not-enter-parser")
-    assert "EVIDENCEDESK_MODEL_API_KEY" not in _runner_environment()
+    runner_environment = _runner_environment()
+    assert "EVIDENCEDESK_MODEL_API_KEY" not in runner_environment
+    assert runner_environment["OMP_THREAD_LIMIT"] == "1"
+    assert runner_environment["OPENBLAS_NUM_THREADS"] == "1"
     settings = Settings(
         _env_file=None,
         env="test",
