@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import re
+from base64 import b64encode
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -35,6 +37,10 @@ def _payload() -> bytes:
 
 def _signature(body: bytes, secret: str) -> str:
     return hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
+
+def _fastspring_signature(body: bytes, secret: str) -> str:
+    return b64encode(hmac.new(secret.encode(), body, hashlib.sha256).digest()).decode()
 
 
 def _subscription_payload(
@@ -336,3 +342,110 @@ def test_entitlements_fail_closed_when_configuration_is_incomplete(tmp_path):
             pro_checkout_url="https://store.example/checkout/buy/pro",
             payment_pro_variant_ids="9001",
         )
+
+
+def test_fastspring_checkout_and_signed_subscription_lifecycle(tmp_path):
+    secret = "fastspring-webhook-secret"
+    settings = Settings(
+        _env_file=None,
+        env="production",
+        db_path=tmp_path / "fastspring.db",
+        document_store_path=tmp_path / "originals",
+        accounts_enabled=True,
+        account_registration_enabled=True,
+        payment_provider="fastspring",
+        payment_webhook_secret=secret,
+        payment_entitlements_enabled=True,
+        payment_pro_variant_ids="evidencedesk-pro-monthly",
+        fastspring_product_path="evidencedesk-pro-monthly",
+        fastspring_storefront_url=(
+            "https://evidencedeskbyizaq.test.onfastspring.com/popup-evidencedeskbyizaq"
+        ),
+        rate_limit_per_minute=10_000,
+    )
+    app = create_app(settings)
+    with TestClient(app, base_url="https://testserver") as client:
+        registered = client.post(
+            "/v1/auth/register",
+            json={
+                "email": "owner@example.com",
+                "display_name": "Workspace Owner",
+                "password": "a-correct-horse-battery-staple",
+            },
+        ).json()
+        checkout = client.get("/v1/billing/checkout")
+        assert checkout.status_code == 200
+        assert "https://sbl.onfastspring.com" in checkout.text
+        assert '"path":"evidencedesk-pro-monthly"' in checkout.text
+        assert registered["workspace_id"] in checkout.text
+        assert secret not in checkout.text
+        assert "https://*.onfastspring.com" in checkout.headers["content-security-policy"]
+        token_match = re.search(r'"entitlement_token":"([0-9a-f]{64})"', checkout.text)
+        assert token_match
+
+        def webhook(event_id: str, event_type: str, state: str, changed: int) -> bytes:
+            return json.dumps(
+                {
+                    "events": [
+                        {
+                            "id": event_id,
+                            "type": event_type,
+                            "live": True,
+                            "created": changed,
+                            "data": {
+                                "id": "subscription-fs-42",
+                                "subscription": "subscription-fs-42",
+                                "state": state,
+                                "live": True,
+                                "changed": changed,
+                                "currency": "USD",
+                                "product": {"product": "evidencedesk-pro-monthly"},
+                                "account": {"contact": {"email": "buyer@example.com"}},
+                                "tags": {
+                                    "workspace_id": registered["workspace_id"],
+                                    "entitlement_token": token_match.group(1),
+                                },
+                            },
+                        }
+                    ]
+                },
+                separators=(",", ":"),
+            ).encode()
+
+        activated = webhook(
+            "event-fs-activated", "subscription.activated", "active", 1_788_000_000_000
+        )
+        activated_result = client.post(
+            "/v1/payments/webhook",
+            content=activated,
+            headers={"X-FS-Signature": _fastspring_signature(activated, secret)},
+        )
+        assert activated_result.json()["entitlement_updated"] is True
+        assert client.get("/v1/auth/me").json()["plan"] == "pro"
+
+        deactivated = webhook(
+            "event-fs-deactivated",
+            "subscription.deactivated",
+            "canceled",
+            1_788_100_000_000,
+        )
+        deactivated_result = client.post(
+            "/v1/payments/webhook",
+            content=deactivated,
+            headers={"X-FS-Signature": _fastspring_signature(deactivated, secret)},
+        )
+        assert deactivated_result.json()["entitlement_updated"] is True
+        assert client.get("/v1/auth/me").json()["plan"] == "free"
+
+        with app.state.repository.database.connect() as connection:
+            stored = connection.execute(
+                "SELECT provider, provider_id, variant_id, status, plan "
+                "FROM workspace_entitlements"
+            ).fetchone()
+        assert dict(stored) == {
+            "provider": "fastspring",
+            "provider_id": "subscription-fs-42",
+            "variant_id": "evidencedesk-pro-monthly",
+            "status": "deactivated",
+            "plan": "free",
+        }

@@ -1,15 +1,15 @@
 # Pro billing entitlement runbook
 
 This is a configuration and acceptance guide for the guarded Pro foundation. It is not evidence
-that EvidenceDesk billing is live, that Lemon Squeezy has approved the store, or that the current
+that EvidenceDesk billing is live, that FastSpring or Lemon Squeezy has approved the store, or that the current
 free Render pilot is suitable for paying customers.
 
 ## What the code does
 
 1. A signed-in workspace administrator selects **Upgrade to Pro**.
-2. EvidenceDesk creates a Lemon Squeezy hosted-checkout URL with a workspace ID and a server-made
-   HMAC binding in custom checkout data. The webhook secret itself never enters the browser.
-3. Lemon Squeezy returns that custom data in its subscription webhook.
+2. EvidenceDesk creates a provider-hosted checkout session with a workspace ID and a server-made
+   HMAC binding in checkout metadata. The webhook secret itself never enters the browser.
+3. The provider returns that metadata in its subscription webhook.
 4. EvidenceDesk verifies the provider signature, resource and event type, live mode, approved
    variant, workspace binding, status, and provider timestamp.
 5. A valid current subscription sets only the bound workspace to `pro`. A newer `expired` or
@@ -28,15 +28,18 @@ mode with accepted PostgreSQL and private object storage, backups, monitoring, a
 
 ```dotenv
 EVIDENCEDESK_ACCOUNTS_ENABLED=true
-EVIDENCEDESK_PRO_CHECKOUT_URL=https://your-store.lemonsqueezy.com/checkout/buy/YOUR_VARIANT
-EVIDENCEDESK_PAYMENT_PRO_VARIANT_IDS=YOUR_NUMERIC_VARIANT_ID
+EVIDENCEDESK_PAYMENT_PROVIDER=fastspring
+EVIDENCEDESK_FASTSPRING_STOREFRONT_URL=https://yourstore.onfastspring.com/popup-yourstore
+EVIDENCEDESK_FASTSPRING_PRODUCT_PATH=evidencedesk-pro-monthly
+EVIDENCEDESK_PAYMENT_PRO_VARIANT_IDS=evidencedesk-pro-monthly
 EVIDENCEDESK_PAYMENT_WEBHOOK_SECRET=YOUR_SERVER_ONLY_SIGNING_SECRET
 EVIDENCEDESK_PAYMENT_ENTITLEMENTS_ENABLED=true
 ```
 
-Multiple approved Pro variants can be comma-separated. Invalid or missing variant IDs, an HTTP
-checkout URL, missing account mode, or a missing webhook secret prevents startup when entitlements
-are enabled.
+Multiple approved Pro products can be comma-separated. FastSpring requires its HTTPS popup
+checkout URL and product path; Lemon Squeezy requires its HTTPS Pro checkout URL and numeric
+variant IDs. Invalid configuration, missing account mode, or a missing webhook secret prevents
+startup when entitlements are enabled.
 
 Create the provider webhook at:
 
@@ -44,7 +47,10 @@ Create the provider webhook at:
 https://YOUR-DOMAIN/v1/payments/webhook
 ```
 
-Subscribe it to the provider's subscription lifecycle events. Never paste the webhook secret into
+For FastSpring, enable webhook expansion and subscribe to `subscription.activated`,
+`subscription.updated`, `subscription.canceled`, `subscription.uncanceled`,
+`subscription.deactivated`, `subscription.payment.overdue`, `subscription.paused`, and
+`subscription.resumed`. Never paste the webhook secret into
 Git, browser code, screenshots, support messages, or a public environment file.
 
 ## Acceptance checklist
@@ -71,6 +77,9 @@ mobile/accessibility testing, and obtain appropriate local legal and tax advice.
 
 Provider references:
 
+- [FastSpring Store Builder sessions](https://developer.fastspring.com/reference/session-object)
+- [FastSpring webhook events](https://developer.fastspring.com/reference/webhooks-overview)
+- [FastSpring HMAC message security](https://developer.fastspring.com/reference/message-security)
 - [Passing custom checkout data](https://docs.lemonsqueezy.com/help/checkout/passing-custom-data)
 - [Webhook event types](https://docs.lemonsqueezy.com/help/webhooks/event-types)
 - [Subscription object and status values](https://docs.lemonsqueezy.com/api/subscriptions/the-subscription-object)

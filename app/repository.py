@@ -1368,7 +1368,7 @@ class Repository:
                        ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
                     (
                         decision.workspace_id,
-                        "lemonsqueezy-webhook",
+                        f"{provider}-webhook",
                         "workspace_entitlement_updated",
                         "workspace",
                         decision.workspace_id,

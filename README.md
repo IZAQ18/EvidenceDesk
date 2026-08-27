@@ -48,7 +48,7 @@ This is an intentionally honest portfolio MVP. It runs locally and demonstrates 
 - An IZAQ portrait signature across the access gate, cinematic intro, header, and product rail.
 - Server-enforced account-mode allowances with atomic Free/Pro document slots, monthly question-attempt accounting, and customer-visible usage meters. The shared-code portfolio pilot remains outside these commercial limits.
 - A clearly labeled freemium product preview with Free, planned Pro, a founding Team pilot, and provider-hosted checkout/support links.
-- A disabled-by-default Lemon Squeezy Pro foundation: account-bound hosted checkout, HMAC webhook verification, approved-variant and live-mode checks, ordered/idempotent entitlement updates, masked customer hints, and admin-only payment notifications. Live billing is not configured or claimed.
+- A disabled-by-default FastSpring or Lemon Squeezy Pro foundation: account-bound hosted checkout, provider-correct HMAC webhook verification, approved-product and live-mode checks, ordered/idempotent entitlement updates, masked customer hints, and admin-only payment notifications. Live billing is not configured or claimed.
 - A public `/about` product page for LinkedIn visitors and payment-provider review, while the document workspace remains behind the private pilot gate.
 - A larger IZAQ support presentation with consented MCB and NayaPay recipient IBANs plus a clearly labeled 40% developer charity pledge.
 - Docker, GitHub Actions CI, evaluation/security tests, and a concrete path to standard AWS.
@@ -282,10 +282,12 @@ If a payment or creator-support provider approves your account, configure its ho
 ```dotenv
 EVIDENCEDESK_CHECKOUT_URL=https://your-store.example/checkout/buy/your-product
 EVIDENCEDESK_SUPPORT_URL=https://your-provider.example/your-support-page
+EVIDENCEDESK_PAYMENT_PROVIDER=fastspring
 EVIDENCEDESK_PAYMENT_WEBHOOK_SECRET=generated-in-the-provider-dashboard
 # Only for a durable account-mode deployment after provider acceptance and test checkout:
-EVIDENCEDESK_PRO_CHECKOUT_URL=https://your-store.lemonsqueezy.com/checkout/buy/your-pro-variant
-EVIDENCEDESK_PAYMENT_PRO_VARIANT_IDS=123456
+EVIDENCEDESK_FASTSPRING_STOREFRONT_URL=https://yourstore.onfastspring.com/popup-yourstore
+EVIDENCEDESK_FASTSPRING_PRODUCT_PATH=evidencedesk-pro-monthly
+EVIDENCEDESK_PAYMENT_PRO_VARIANT_IDS=evidencedesk-pro-monthly
 EVIDENCEDESK_PAYMENT_ENTITLEMENTS_ENABLED=true
 ```
 

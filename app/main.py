@@ -87,7 +87,9 @@ from app.models import (
 )
 from app.payments import (
     InvalidPaymentWebhook,
+    build_fastspring_checkout_page,
     build_pro_checkout_url,
+    parse_fastspring_webhook,
     parse_lemonsqueezy_webhook,
     pro_entitlement_decision,
 )
@@ -332,11 +334,22 @@ def create_app(
         response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         response.headers["Cache-Control"] = "public, max-age=300" if is_public_site else "no-store"
-        response.headers["Content-Security-Policy"] = (
-            "default-src 'self' blob:; style-src 'self' 'unsafe-inline'; "
-            "script-src 'self' 'unsafe-inline'; connect-src 'self'; "
-            "frame-src blob:; frame-ancestors 'none'"
-        )
+        if (
+            request.url.path == "/v1/billing/checkout"
+            and resolved_settings.payment_provider == "fastspring"
+        ):
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; style-src 'self' 'unsafe-inline'; "
+                "script-src 'self' 'unsafe-inline' https://sbl.onfastspring.com; "
+                "connect-src 'self' https://*.onfastspring.com; "
+                "frame-src https://*.onfastspring.com; frame-ancestors 'none'"
+            )
+        else:
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self' blob:; style-src 'self' 'unsafe-inline'; "
+                "script-src 'self' 'unsafe-inline'; connect-src 'self'; "
+                "frame-src blob:; frame-ancestors 'none'"
+            )
         if resolved_settings.env == "production":
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         logger.info(
@@ -1057,8 +1070,8 @@ def create_app(
         )
         return response
 
-    @app.get("/v1/billing/checkout", include_in_schema=False)
-    def pro_billing_checkout(request: Request) -> RedirectResponse:
+    @app.get("/v1/billing/checkout", include_in_schema=False, response_model=None)
+    def pro_billing_checkout(request: Request) -> HTMLResponse | RedirectResponse:
         if not resolved_settings.payment_entitlements_enabled:
             raise HTTPException(status_code=404, detail="Pro checkout is not configured")
         session = required_account_session(request)
@@ -1066,8 +1079,19 @@ def create_app(
             raise HTTPException(status_code=403, detail="Workspace administrator required")
         if session.plan == "pro":
             raise HTTPException(status_code=409, detail="This workspace already has Pro access")
-        assert resolved_settings.pro_checkout_url
         assert resolved_settings.payment_webhook_secret
+        if resolved_settings.payment_provider == "fastspring":
+            assert resolved_settings.fastspring_storefront_url
+            assert resolved_settings.fastspring_product_path
+            return HTMLResponse(
+                build_fastspring_checkout_page(
+                    resolved_settings.fastspring_storefront_url,
+                    resolved_settings.fastspring_product_path,
+                    session.workspace_id,
+                    resolved_settings.payment_webhook_secret.get_secret_value(),
+                )
+            )
+        assert resolved_settings.pro_checkout_url
         target = build_pro_checkout_url(
             resolved_settings.pro_checkout_url,
             session.workspace_id,
@@ -1088,36 +1112,58 @@ def create_app(
         body = await request.body()
         if len(body) > 1_000_000:
             raise HTTPException(status_code=413, detail="Payment event is too large")
+        provider = resolved_settings.payment_provider
         try:
-            event = parse_lemonsqueezy_webhook(
-                body,
-                request.headers.get("X-Signature"),
-                configured_secret.get_secret_value(),
-            )
+            if provider == "fastspring":
+                events = parse_fastspring_webhook(
+                    body,
+                    request.headers.get("X-FS-Signature"),
+                    configured_secret.get_secret_value(),
+                )
+            else:
+                events = [
+                    parse_lemonsqueezy_webhook(
+                        body,
+                        request.headers.get("X-Signature"),
+                        configured_secret.get_secret_value(),
+                    )
+                ]
         except InvalidPaymentWebhook as exc:
             raise HTTPException(status_code=401, detail="Invalid payment event") from exc
-        decision = None
-        if resolved_settings.payment_entitlements_enabled:
-            decision = pro_entitlement_decision(
-                event,
-                approved_variant_ids=resolved_settings.resolved_payment_pro_variant_ids(),
-                secret=configured_secret.get_secret_value(),
+        created_count = 0
+        eligible_count = 0
+        updated_count = 0
+        for event in events:
+            decision = None
+            if resolved_settings.payment_entitlements_enabled:
+                decision = pro_entitlement_decision(
+                    event,
+                    approved_variant_ids=resolved_settings.resolved_payment_pro_variant_ids(),
+                    secret=configured_secret.get_secret_value(),
+                )
+            tenant_id = decision.workspace_id if decision else resolved_settings.pilot_tenant_id
+            created = repository.record_payment_event(
+                event, tenant_id=tenant_id, provider=provider
             )
-        tenant_id = decision.workspace_id if decision else resolved_settings.pilot_tenant_id
-        created = repository.record_payment_event(event, tenant_id=tenant_id)
-        entitlement_updated = bool(decision) and repository.apply_workspace_entitlement(decision)
-        logger.info(
-            "payment_event provider=lemonsqueezy event=%s stored=%s test_mode=%s entitlement_updated=%s",
-            event.event_name,
-            created,
-            event.test_mode,
-            entitlement_updated,
-        )
+            entitlement_updated = bool(decision) and repository.apply_workspace_entitlement(
+                decision, provider=provider
+            )
+            created_count += int(created)
+            eligible_count += int(decision is not None)
+            updated_count += int(entitlement_updated)
+            logger.info(
+                "payment_event provider=%s event=%s stored=%s test_mode=%s entitlement_updated=%s",
+                provider,
+                event.event_name,
+                created,
+                event.test_mode,
+                entitlement_updated,
+            )
         return {
             "accepted": True,
-            "duplicate": not created,
-            "entitlement_eligible": decision is not None,
-            "entitlement_updated": entitlement_updated,
+            "duplicate": created_count == 0,
+            "entitlement_eligible": eligible_count > 0,
+            "entitlement_updated": updated_count > 0,
         }
 
     @app.get("/v1/capabilities", dependencies=[Depends(enforce_rate_limit)])

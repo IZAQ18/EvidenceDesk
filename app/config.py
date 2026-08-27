@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
@@ -122,9 +123,14 @@ class Settings(BaseSettings):
     support_url: str | None = None
     checkout_url: str | None = None
     pro_checkout_url: str | None = None
+    payment_provider: Literal["lemonsqueezy", "fastspring"] = "lemonsqueezy"
     payment_webhook_secret: SecretStr | None = None
     payment_entitlements_enabled: bool = False
     payment_pro_variant_ids: str = Field(default="", max_length=1_000)
+    fastspring_storefront_url: str | None = None
+    fastspring_product_path: str | None = Field(
+        default=None, pattern=r"^[A-Za-z0-9_-]{1,100}$"
+    )
     allowed_hosts: str = "localhost,127.0.0.1,testserver,*.onrender.com,*.koyeb.app"
 
     @model_validator(mode="after")
@@ -150,12 +156,27 @@ class Settings(BaseSettings):
             raise ValueError("Payment and support URLs must use HTTPS")
         return normalized
 
+    @field_validator("fastspring_storefront_url")
+    @classmethod
+    def validate_fastspring_storefront_url(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        normalized = value.strip().rstrip("/")
+        parts = urlsplit(normalized)
+        if (
+            parts.scheme != "https"
+            or not parts.hostname
+            or not parts.hostname.endswith(".onfastspring.com")
+            or not parts.path.startswith("/popup-")
+        ):
+            raise ValueError("FastSpring storefront must be an HTTPS popup checkout URL")
+        return normalized
+
     def resolved_payment_pro_variant_ids(self) -> set[str]:
-        return {
-            item.strip()
-            for item in self.payment_pro_variant_ids.split(",")
-            if item.strip().isdigit()
-        }
+        values = {item.strip() for item in self.payment_pro_variant_ids.split(",") if item.strip()}
+        if self.payment_provider == "lemonsqueezy":
+            return {item for item in values if item.isdigit()}
+        return {item for item in values if re.fullmatch(r"[A-Za-z0-9_-]{1,100}", item)}
 
     @model_validator(mode="after")
     def validate_payment_entitlements(self) -> Settings:
@@ -165,13 +186,27 @@ class Settings(BaseSettings):
             raise ValueError("Payment entitlements require account authentication")
         if self.payment_webhook_secret is None:
             raise ValueError("Payment entitlements require a webhook secret")
-        if self.pro_checkout_url is None:
-            raise ValueError("Payment entitlements require a Pro checkout URL")
+        if self.payment_provider == "lemonsqueezy" and self.pro_checkout_url is None:
+            raise ValueError("Lemon Squeezy entitlements require a Pro checkout URL")
+        if self.payment_provider == "fastspring" and (
+            self.fastspring_storefront_url is None or self.fastspring_product_path is None
+        ):
+            raise ValueError("FastSpring entitlements require a storefront URL and product path")
         configured_variants = [
             item.strip() for item in self.payment_pro_variant_ids.split(",") if item.strip()
         ]
-        if not configured_variants or any(not item.isdigit() for item in configured_variants):
+        invalid_variant = (
+            any(not item.isdigit() for item in configured_variants)
+            if self.payment_provider == "lemonsqueezy"
+            else any(not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", item) for item in configured_variants)
+        )
+        if not configured_variants or invalid_variant:
             raise ValueError("Payment entitlements require approved Pro variant IDs")
+        if (
+            self.payment_provider == "fastspring"
+            and self.fastspring_product_path not in configured_variants
+        ):
+            raise ValueError("FastSpring product path must be in approved Pro variant IDs")
         return self
 
     @field_validator("model_base_url")
