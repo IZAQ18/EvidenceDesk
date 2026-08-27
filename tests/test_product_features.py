@@ -140,7 +140,17 @@ def test_workspace_exposes_guided_pilot_without_requesting_contact_details(clien
     assert "||'cobalt'" in page.text
     assert "$9" in page.text
     assert "$149" in page.text
+    assert "documents stored" in page.text
+    assert "cited questions" in page.text
+    assert "storage limit, not a monthly upload limit" in page.text
     assert 'name="email"' not in page.text
+
+    public_page = client.get("/about")
+    assert public_page.status_code == 200
+    assert "5</b>documents stored at one time" in public_page.text
+    assert "100</b>cited questions every month" in public_page.text
+    assert "100</b>documents stored at one time" in public_page.text
+    assert "2,000</b>cited questions every month" in public_page.text
 
 
 def test_collections_versions_supersession_bulk_and_metrics(client):

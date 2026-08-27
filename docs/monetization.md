@@ -51,6 +51,32 @@ EvidenceDesk now includes a disabled-by-default Lemon Squeezy Pro foundation. An
 
 This code is not a claim that billing is live. The protected Render pilot still uses shared pilot access and ephemeral storage, so it cannot enable subscription entitlements. The one-time Team pilot remains a manually qualified service offer rather than an automatically granted plan.
 
+## Provider decision for a Pakistan-based developer
+
+The current site does **not** accept subscription payments. Direct MCB/NayaPay support is voluntary
+and never unlocks a product plan.
+
+Lemon Squeezy still lists Pakistan for bank payouts, so an identity-verification problem is not the
+same as a country-wide rejection. Keep one support case open, but do not block launch planning on it.
+The recommended next application is **Paddle**: its official Pakistan product page markets service
+to Pakistani SaaS businesses, Paddle accepts individuals/sole traders without the separate business
+identification step, and payouts can use wire transfer or Payoneer. Approval and identity/domain
+review are still required, so none of this guarantees acceptance.
+
+**FastSpring** is the fallback Merchant of Record candidate. Its current payout portal supports
+international SWIFT wire transfers, although its own onboarding and payout verification still apply.
+
+Apply to one provider at a time using the live `/about` page, matching legal name and bank records,
+the synthetic demo, pricing explanation, privacy boundary, refund plan, and support contact. Do not
+replace the tested Lemon Squeezy webhook adapter until another provider approves the account and
+provides sandbox credentials.
+
+Official references: [Lemon Squeezy supported countries](https://docs.lemonsqueezy.com/help/getting-started/supported-countries),
+[Paddle for Pakistan](https://www.paddle.com/billing/pakistan),
+[Paddle business identification](https://www.paddle.com/help/start/account-verification/what-is-business-verification),
+[Paddle payouts](https://www.paddle.com/help/manage/get-paid/when-and-how-do-i-get-paid), and
+[FastSpring payout setup](https://developer.fastspring.com/docs/set-up-your-payout-account).
+
 Before enabling live checkout, still add:
 
 - provision and acceptance-test the existing PostgreSQL and private object-storage adapters;
