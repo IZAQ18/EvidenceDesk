@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import time
 
 from fastapi.testclient import TestClient
 
 from app.config import PrincipalConfig, Settings
+from app.ingestion_worker import run_ingestion_worker
 from app.main import create_app
 from tests.conftest import auth
 
@@ -129,3 +131,39 @@ def test_expired_worker_lease_is_claimed_again(tmp_path):
         recovered = repository.claim_ingestion_job("worker-two", lease_seconds=30)
         assert recovered and recovered["id"] == queued["id"]
         assert recovered["attempts"] == 2
+
+
+def test_worker_recovers_after_a_temporary_claim_error(tmp_path):
+    stop = asyncio.Event()
+
+    class FlakyRepository:
+        def __init__(self):
+            self.calls = 0
+
+        def claim_ingestion_job(self, worker_id, lease_seconds):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("temporary database error")
+            stop.set()
+            return None
+
+    repository = FlakyRepository()
+    settings = Settings(
+        _env_file=None,
+        env="test",
+        db_path=tmp_path / "worker.db",
+        document_store_path=tmp_path / "originals",
+        ingestion_worker_poll_seconds=0.1,
+    )
+
+    asyncio.run(
+        run_ingestion_worker(
+            repository,
+            storage=None,
+            settings=settings,
+            stop=stop,
+            malware_scanner=None,
+        )
+    )
+
+    assert repository.calls == 2

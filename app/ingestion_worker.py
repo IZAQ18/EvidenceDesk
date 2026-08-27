@@ -262,21 +262,45 @@ async def run_ingestion_worker(
     worker_id = f"{os.getpid()}-{uuid4()}"
     logger.info("ingestion_worker_started worker_id=%s", worker_id)
     while not stop.is_set():
-        job = await asyncio.to_thread(
-            repository.claim_ingestion_job,
-            worker_id,
-            settings.ingestion_job_lease_seconds,
-        )
-        if job:
-            await asyncio.to_thread(
-                process_ingestion_job,
-                job,
-                worker_id=worker_id,
-                repository=repository,
-                storage=storage,
-                settings=settings,
-                malware_scanner=malware_scanner,
+        try:
+            job = await asyncio.to_thread(
+                repository.claim_ingestion_job,
+                worker_id,
+                settings.ingestion_job_lease_seconds,
             )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("ingestion_worker_claim_failed worker_id=%s", worker_id)
+            try:
+                await asyncio.wait_for(
+                    stop.wait(), timeout=settings.ingestion_worker_poll_seconds
+                )
+            except TimeoutError:
+                pass
+            continue
+        if job:
+            try:
+                await asyncio.to_thread(
+                    process_ingestion_job,
+                    job,
+                    worker_id=worker_id,
+                    repository=repository,
+                    storage=storage,
+                    settings=settings,
+                    malware_scanner=malware_scanner,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # process_ingestion_job contains its own failure handling. This final
+                # guard keeps one unforeseen error from terminating the whole worker;
+                # the job lease makes the interrupted job eligible for a later retry.
+                logger.exception(
+                    "ingestion_worker_process_failed worker_id=%s job_id=%s",
+                    worker_id,
+                    job.get("id", "unknown"),
+                )
             continue
         try:
             await asyncio.wait_for(stop.wait(), timeout=settings.ingestion_worker_poll_seconds)
