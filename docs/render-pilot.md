@@ -26,6 +26,14 @@ Configure the provider callback as `https://YOUR-SERVICE.onrender.com/v1/payment
 
 Render's free ephemeral SQLite database is not a financial ledger. The payment provider dashboard remains the source of truth, and live commercial launch should move payment-event state to durable PostgreSQL before relying on the in-app panel.
 
+## Optional Google sign-in acceptance
+
+The repository includes a disabled-by-default **Continue with Google** account flow. It cannot run
+at the same time as the shared pilot access code. Follow the [Google sign-in runbook](google-signin.md)
+to create a Google Web application client and enter its secret only in Render. Because this free
+service stores accounts and documents ephemerally, use it only for a synthetic-data acceptance
+test; durable public accounts still require managed PostgreSQL and private object storage.
+
 ## Verify the pilot
 
 1. Wait for the initial Docker deployment to become live.

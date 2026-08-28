@@ -13,7 +13,7 @@ the organization has not supplied enough information.
 
 | Gate | Measurable definition | Current state |
 | --- | --- | --- |
-| Account safety | Individual sign-in, verified email, recovery, revocable sessions, CSRF protection, tenant isolation | Verification/recovery, scoped invitations, and workspace switching implemented and tested; real SMTP/domain and managed-data acceptance pending |
+| Account safety | Individual sign-in, verified email, recovery, revocable sessions, CSRF protection, tenant isolation | Password accounts plus Google authorization-code sign-in, identity linking, verification/recovery, scoped invitations, and workspace switching implemented and tested; live Google/SMTP and managed-data acceptance pending |
 | Durable data | Managed PostgreSQL, private object storage, backups, restore exercise | Adapters, bounded pooling, readiness checks, guarded copy tool, restore verifier, and unapplied AWS data-plane template implemented; PostgreSQL 16 path tested in CI. Managed-resource provisioning and operator-run restore acceptance pending |
 | Ingestion | Async processing, malware scan, progress, resilient OCR and table handling | Quarantine/promotion, private-clamd adapter, bounded parser subprocess, standalone worker command, dead-letter visibility, progress, retry, integrity, and lease recovery implemented and tested. Live private-scanner acceptance and advanced table extraction pending |
 | Answer quality | Organization-specific gold set, >=95% retrieval success, >=98% valid citations | Hybrid local semantic retrieval, reranking, diagnostics, and an 8-case synthetic regression benchmark implemented; customer-specific held-out evaluation pending |
@@ -48,6 +48,7 @@ The optional account mode now provides:
 - a private workspace and administrator membership for each account;
 - retrieval and document isolation through the existing tenant predicates;
 - a polished sign-in and account-aware workspace with no API-key prompt;
+- optional Google sign-in with state, nonce, signed ID-token validation, stable subject linking, and no retained Google access tokens;
 - automated tests covering registration, weak passwords, login failure, CSRF, forgery,
   revocation, duplicate accounts, invite-only mode, and cross-account isolation.
 

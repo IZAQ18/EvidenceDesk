@@ -34,6 +34,7 @@ from app.accounts import (
     AccountExistsError,
     AccountSession,
     AccountStore,
+    ExternalIdentityError,
     InvitationError,
     MembershipError,
     WorkspaceInvitationAction,
@@ -44,6 +45,13 @@ from app.accounts import (
 from app.config import Classification, Settings, get_settings
 from app.db import build_database
 from app.email_delivery import AccountEmailSender, build_account_email_sender
+from app.google_oauth import (
+    GOOGLE_OAUTH_COOKIE,
+    OAUTH_ATTEMPT_SECONDS,
+    GoogleOAuthClient,
+    GoogleOAuthError,
+    GoogleOAuthProvider,
+)
 from app.ingestion import (
     ExtractedDocument,
     ExtractedPage,
@@ -188,6 +196,7 @@ def create_app(
     model_transport: ModelTransport | None = None,
     account_email_sender: AccountEmailSender | None = None,
     malware_scanner: MalwareScanner | None = None,
+    google_oauth_provider: GoogleOAuthProvider | None = None,
 ) -> FastAPI:
     resolved_settings = settings or get_settings()
     resolved_settings.validate_model_gateway()
@@ -201,6 +210,7 @@ def create_app(
     model_gateway = ModelGateway(resolved_settings, repository, model_transport)
     workflow = AnswerWorkflow(repository, model_gateway)
     account_store = AccountStore(database, resolved_settings.account_session_hours)
+    google_oauth = google_oauth_provider or GoogleOAuthClient(resolved_settings)
     email_sender = account_email_sender or build_account_email_sender(resolved_settings)
     scanner = malware_scanner or build_malware_scanner(resolved_settings)
 
@@ -260,6 +270,7 @@ def create_app(
     app.state.settings = resolved_settings
     app.state.repository = repository
     app.state.account_store = account_store
+    app.state.google_oauth = google_oauth
     app.state.account_email_sender = email_sender
     app.state.model_gateway = model_gateway
     app.state.malware_scanner = scanner
@@ -300,6 +311,8 @@ def create_app(
             "/developer-signature.png",
             "/access",
             "/signin",
+            "/auth/google/start",
+            "/auth/google/callback",
             "/forgot-password",
             "/reset-password",
             "/verify-email",
@@ -506,7 +519,9 @@ def create_app(
         return session
 
     @app.get("/signin", response_class=HTMLResponse, response_model=None, include_in_schema=False)
-    def signin(request: Request, next: str = "/") -> HTMLResponse | RedirectResponse:
+    def signin(
+        request: Request, next: str = "/", auth_error: str | None = None
+    ) -> HTMLResponse | RedirectResponse:
         next_path = (
             next
             if next.startswith("/") and not next.startswith("//") and "\\" not in next
@@ -522,8 +537,102 @@ def create_app(
                 resolved_settings.account_email_verification_required,
                 resolved_settings.account_password_reset_enabled,
                 next_path,
+                google_oauth.enabled,
+                resolved_settings.google_oauth_registration_enabled,
+                auth_error,
             )
         )
+
+    @app.get(
+        "/auth/google/start",
+        response_class=RedirectResponse,
+        response_model=None,
+        include_in_schema=False,
+    )
+    def google_signin_start(next: str = "/") -> RedirectResponse:
+        if not resolved_settings.accounts_enabled or not google_oauth.enabled:
+            return RedirectResponse("/signin", status_code=303)
+        try:
+            authorization_url, attempt_cookie = google_oauth.begin(next)
+        except GoogleOAuthError:
+            return RedirectResponse("/signin?auth_error=google_failed", status_code=303)
+        response = RedirectResponse(authorization_url, status_code=303)
+        response.set_cookie(
+            GOOGLE_OAUTH_COOKIE,
+            attempt_cookie,
+            max_age=OAUTH_ATTEMPT_SECONDS,
+            httponly=True,
+            secure=resolved_settings.env == "production",
+            samesite="lax",
+            path="/auth/google",
+        )
+        return response
+
+    @app.get(
+        "/auth/google/callback",
+        response_class=RedirectResponse,
+        response_model=None,
+        include_in_schema=False,
+    )
+    async def google_signin_callback(
+        request: Request,
+        code: str = "",
+        state: str = "",
+        error: str = "",
+    ) -> RedirectResponse:
+        def failed(code_name: str) -> RedirectResponse:
+            response = RedirectResponse(f"/signin?auth_error={code_name}", status_code=303)
+            response.delete_cookie(
+                GOOGLE_OAUTH_COOKIE,
+                httponly=True,
+                secure=resolved_settings.env == "production",
+                samesite="lax",
+                path="/auth/google",
+            )
+            return response
+
+        if not resolved_settings.accounts_enabled or not google_oauth.enabled:
+            return failed("google_failed")
+        if error:
+            return failed("google_denied" if error == "access_denied" else "google_failed")
+        attempt_cookie = request.cookies.get(GOOGLE_OAUTH_COOKIE, "")
+        try:
+            result = await google_oauth.complete(code, state, attempt_cookie)
+            session, outcome = account_store.login_external_identity(
+                "google",
+                result.identity.subject,
+                result.identity.email,
+                result.identity.display_name,
+                allow_registration=resolved_settings.google_oauth_registration_enabled,
+            )
+        except GoogleOAuthError as exc:
+            safe_code = exc.code if exc.code in {"state_invalid", "state_expired"} else "google_failed"
+            return failed(safe_code)
+        except ExternalIdentityError as exc:
+            safe_code = (
+                str(exc)
+                if str(exc)
+                in {"registration_closed", "account_unavailable", "identity_conflict"}
+                else "google_failed"
+            )
+            return failed(safe_code)
+        response = RedirectResponse(result.next_path, status_code=303)
+        set_account_cookie(response, session.token)
+        response.delete_cookie(
+            GOOGLE_OAUTH_COOKIE,
+            httponly=True,
+            secure=resolved_settings.env == "production",
+            samesite="lax",
+            path="/auth/google",
+        )
+        repository.audit(
+            session.principal,
+            "account_google_login",
+            "user",
+            session.user_id,
+            {"provider": "google", "outcome": outcome},
+        )
+        return response
 
     @app.get(
         "/forgot-password",

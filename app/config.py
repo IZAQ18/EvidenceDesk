@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     account_password_reset_token_minutes: int = Field(default=30, ge=10, le=120)
     account_invitation_hours: int = Field(default=72, ge=1, le=336)
     account_export_max_bytes: int = Field(default=250_000_000, ge=1_000_000, le=1_000_000_000)
+    google_oauth_enabled: bool = False
+    google_oauth_registration_enabled: bool = False
+    google_oauth_client_id: str | None = Field(default=None, max_length=300)
+    google_oauth_client_secret: SecretStr | None = None
+    google_oauth_redirect_uri: str | None = Field(default=None, max_length=500)
+    google_oauth_timeout_seconds: float = Field(default=10.0, ge=3.0, le=30.0)
     email_delivery_backend: Literal["disabled", "smtp"] = "disabled"
     smtp_host: str | None = None
     smtp_port: int = Field(default=587, ge=1, le=65535)
@@ -209,6 +215,12 @@ class Settings(BaseSettings):
             else self.ingestion_worker_cpu_seconds
         )
 
+    def resolved_google_oauth_redirect_uri(self) -> str:
+        if self.google_oauth_redirect_uri and self.google_oauth_redirect_uri.strip():
+            return self.google_oauth_redirect_uri.strip()
+        base_url = (self.public_base_url or "http://localhost:8000").rstrip("/")
+        return f"{base_url}/auth/google/callback"
+
     @model_validator(mode="after")
     def validate_payment_entitlements(self) -> Settings:
         if not self.payment_entitlements_enabled:
@@ -283,6 +295,43 @@ class Settings(BaseSettings):
             )
         if self.account_registration_enabled and not self.accounts_enabled:
             raise RuntimeError("Account registration requires EVIDENCEDESK_ACCOUNTS_ENABLED=true")
+        if self.google_oauth_enabled:
+            if not self.accounts_enabled:
+                raise RuntimeError("Google sign-in requires EVIDENCEDESK_ACCOUNTS_ENABLED=true")
+            client_secret = (
+                self.google_oauth_client_secret.get_secret_value().strip()
+                if self.google_oauth_client_secret
+                else ""
+            )
+            missing_google = [
+                name
+                for name, value in {
+                    "EVIDENCEDESK_GOOGLE_OAUTH_CLIENT_ID": self.google_oauth_client_id,
+                    "EVIDENCEDESK_GOOGLE_OAUTH_CLIENT_SECRET": client_secret,
+                }.items()
+                if not value or not value.strip()
+            ]
+            if missing_google:
+                raise RuntimeError(
+                    "Google sign-in configuration is incomplete: " + ", ".join(missing_google)
+                )
+            if not self.google_oauth_client_id or not self.google_oauth_client_id.endswith(
+                ".apps.googleusercontent.com"
+            ):
+                raise RuntimeError("Google sign-in requires a Web application OAuth client ID")
+            redirect = urlsplit(self.resolved_google_oauth_redirect_uri())
+            if redirect.path != "/auth/google/callback" or redirect.query or redirect.fragment:
+                raise RuntimeError(
+                    "Google OAuth redirect URI must end exactly with /auth/google/callback"
+                )
+            if self.env == "production" and redirect.scheme != "https":
+                raise RuntimeError("Production Google sign-in requires an HTTPS redirect URI")
+            if redirect.scheme not in {"http", "https"} or not redirect.hostname:
+                raise RuntimeError("Google OAuth redirect URI is invalid")
+        if self.google_oauth_registration_enabled and not self.google_oauth_enabled:
+            raise RuntimeError(
+                "Google registration requires EVIDENCEDESK_GOOGLE_OAUTH_ENABLED=true"
+            )
         if (
             self.account_export_enabled or self.account_deletion_enabled
         ) and not self.accounts_enabled:

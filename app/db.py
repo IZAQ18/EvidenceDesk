@@ -157,6 +157,19 @@ CREATE TABLE IF NOT EXISTS users (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS account_identities (
+    provider TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    email TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    last_login_at TEXT NOT NULL,
+    PRIMARY KEY(provider, subject),
+    UNIQUE(provider, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_account_identities_user
+    ON account_identities(user_id);
+
 CREATE TABLE IF NOT EXISTS workspaces (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -645,6 +658,23 @@ POSTGRES_MIGRATIONS: tuple[tuple[int, tuple[str, ...]], ...] = (
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY(workspace_id, usage_month)
             )""",
+        ),
+    ),
+    (
+        10,
+        (
+            """CREATE TABLE IF NOT EXISTS account_identities (
+                provider TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                email TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                last_login_at TEXT NOT NULL,
+                PRIMARY KEY(provider, subject),
+                UNIQUE(provider, user_id)
+            )""",
+            """CREATE INDEX IF NOT EXISTS idx_account_identities_user
+               ON account_identities(user_id)""",
         ),
     ),
 )

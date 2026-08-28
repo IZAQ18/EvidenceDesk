@@ -33,6 +33,8 @@ This is an intentionally honest portfolio MVP. It runs locally and demonstrates 
   SMTP delivery boundaries, scoped one-time workspace invitations and switching, bounded private
   exports, guarded deletion, member access review/removal, password-confirmed ownership transfer,
   safe workspace departure, and a separate private workspace for every registered user.
+- Optional Google authorization-code sign-in with signed attempt state, verified identity linking,
+  and no retained Google access or refresh tokens.
 - A replaceable original-storage boundary with backward-compatible local files and an optional
   private S3 backend using tenant-scoped object keys, authenticated streaming, server-side
   encryption, KMS support, and expected-bucket-owner protection.
@@ -44,7 +46,7 @@ This is an intentionally honest portfolio MVP. It runs locally and demonstrates 
 - A daylight-first editorial interface with layered evidence surfaces, green trust states, orange evidence accents, an optional dark theme, responsive mobile layout, keyboard focus states, and an IZAQ / 4UP design-engineering signature.
 - Prompt starters, auto-growing questions, toast feedback, `/` question focus, and `Ctrl/Cmd + K` library search.
 - A replayable cinematic intro with an IZAQ maker reveal, progress counter, skip control, mobile composition, and reduced-motion fallback.
-- Grove and Citrus accent palettes, interactive pointer light, clear navigation, and expressive verified-evidence states.
+- Clearly distinct Green and Orange palettes, interactive pointer light, clear navigation, and expressive verified-evidence states.
 - An IZAQ portrait signature across the access gate, cinematic intro, header, and product rail.
 - Server-enforced account-mode allowances with atomic Free/Pro document slots, monthly question-attempt accounting, and customer-visible usage meters. The shared-code portfolio pilot remains outside these commercial limits.
 - A clearly labeled freemium product preview with Free, planned Pro, a founding Team pilot, and provider-hosted checkout/support links.
@@ -57,7 +59,7 @@ This is an intentionally honest portfolio MVP. It runs locally and demonstrates 
 
 ```text
 Browser / API client
-       │  API key or validated OIDC bearer token
+       │  account session (password/Google), API key, or validated OIDC bearer token
        ▼
 FastAPI ──► identity + tenant/classification/role policy
        │
@@ -146,6 +148,25 @@ account pending until its one-time link is confirmed. Existing tenant filters is
 retrieval, conversations, reports, feedback, and metrics by workspace. This is a production-minded
 boundary, not a claim that public account service is finished.
 
+Account mode also supports an optional **Continue with Google** flow using Google's server-side
+authorization-code protocol. It requests only `openid email profile`, validates signed ID-token
+claims plus state and nonce, links the stable Google subject to a local account, and discards Google
+tokens after creating the EvidenceDesk session:
+
+```dotenv
+EVIDENCEDESK_GOOGLE_OAUTH_ENABLED=true
+EVIDENCEDESK_GOOGLE_OAUTH_REGISTRATION_ENABLED=true
+EVIDENCEDESK_GOOGLE_OAUTH_CLIENT_ID=your-web-client.apps.googleusercontent.com
+EVIDENCEDESK_GOOGLE_OAUTH_CLIENT_SECRET=server-only-secret
+EVIDENCEDESK_PUBLIC_BASE_URL=https://app.example.com
+```
+
+Google self-service registration has its own switch,
+`EVIDENCEDESK_GOOGLE_OAUTH_REGISTRATION_ENABLED`, so password registration can remain closed.
+When that switch is false, only an existing EvidenceDesk user with the same verified email can link
+Google. Follow the
+[Google sign-in runbook](docs/google-signin.md) before activating it.
+
 Verified signup and recovery are separately opt-in. Production fails closed unless SMTP uses
 STARTTLS and an HTTPS public URL is configured:
 
@@ -166,7 +187,8 @@ Tokens are random, stored only as SHA-256 hashes, expire, rotate when reissued, 
 once. Resetting a password revokes every existing session. Unknown-account requests receive the
 same response as known accounts. Real sender-domain authentication, delivery monitoring, abuse
 controls, and provider acceptance remain deployment gates; see the
-[account email runbook](docs/account-email.md), [account controls](docs/account-controls.md), and
+[Google sign-in runbook](docs/google-signin.md), [account email runbook](docs/account-email.md),
+[account controls](docs/account-controls.md), and
 [launch readiness](docs/launch-readiness.md).
 
 ### Configure durable originals
