@@ -1,0 +1,59 @@
+1
+00:00:00,000 --> 00:00:04,000
+Every answer can sound certain.
+
+2
+00:00:04,000 --> 00:00:08,000
+But can you prove it?
+
+3
+00:00:08,000 --> 00:00:12,000
+Meet EvidenceDesk.
+
+4
+00:00:12,000 --> 00:00:16,000
+Ask your documents.
+
+5
+00:00:16,000 --> 00:00:20,000
+Inspect every supported claim.
+
+6
+00:00:20,000 --> 00:00:24,000
+Upload approved documents.
+
+7
+00:00:24,000 --> 00:00:28,000
+OCR reads scanned PDFs.
+
+8
+00:00:28,000 --> 00:00:32,000
+Evidence is retrieved first.
+
+9
+00:00:32,000 --> 00:00:36,000
+Answers stay grounded.
+
+10
+00:00:36,000 --> 00:00:40,000
+Citations open the source.
+
+11
+00:00:40,000 --> 00:00:44,000
+Access is scoped before retrieval.
+
+12
+00:00:44,000 --> 00:00:48,000
+Weak evidence triggers a safe refusal.
+
+13
+00:00:48,000 --> 00:00:52,000
+Built for organizational knowledge.
+
+14
+00:00:52,000 --> 00:00:56,000
+Evidence before confidence.
+
+15
+00:00:56,000 --> 00:01:00,000
+Try the protected EvidenceDesk pilot.

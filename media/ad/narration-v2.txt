@@ -1,0 +1,11 @@
+AI can give a confident answer in seconds. But when the question is about policy, procedure, or compliance, confidence is not proof.
+
+EvidenceDesk changes the workflow. It answers from the organization’s own approved documents and shows where every supported claim came from.
+
+Upload a searchable or scanned PDF. EvidenceDesk validates it, applies OCR when needed, and turns it into retrievable evidence. Ask a normal question. It finds the relevant passages first, then writes a grounded answer. Open any citation to inspect the exact page and highlighted source.
+
+Access is scoped before retrieval, and weak evidence triggers a clear refusal instead of a guess. That makes EvidenceDesk useful for handbooks, procedures, operational knowledge, and document review.
+
+The protected pilot uses synthetic or non-sensitive files while the commercial release is being prepared.
+
+EvidenceDesk: evidence before confidence. Try the live pilot.

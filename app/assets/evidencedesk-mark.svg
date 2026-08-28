@@ -1,39 +1,32 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
   <title id="title">EvidenceDesk</title>
-  <desc id="desc">A luminous E held inside citation brackets with a verified evidence seal</desc>
+  <desc id="desc">A verified document framed by citation brackets</desc>
   <defs>
-    <linearGradient id="shell" x1="7" y1="5" x2="58" y2="61" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#0d2330"/>
-      <stop offset="0.52" stop-color="#08151f"/>
-      <stop offset="1" stop-color="#07120f"/>
+    <linearGradient id="tile" x1="8" y1="5" x2="57" y2="61" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#f4f8f3"/>
     </linearGradient>
-    <linearGradient id="spectrum" x1="12" y1="10" x2="53" y2="54" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#6ee7f2"/>
-      <stop offset="0.48" stop-color="#568dff"/>
-      <stop offset="1" stop-color="#ffc45e"/>
+    <linearGradient id="trust" x1="11" y1="12" x2="53" y2="53" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0f9f69"/>
+      <stop offset=".58" stop-color="#16845e"/>
+      <stop offset="1" stop-color="#ef7a22"/>
     </linearGradient>
-    <linearGradient id="evidence" x1="20" y1="16" x2="47" y2="48" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#eafcff"/>
-      <stop offset="0.48" stop-color="#8ee8ff"/>
-      <stop offset="1" stop-color="#71e0aa"/>
+    <linearGradient id="paper" x1="22" y1="16" x2="44" y2="48" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#eaf4ed"/>
     </linearGradient>
-    <radialGradient id="aura" cx="0" cy="0" r="1" gradientTransform="translate(31 29) rotate(52) scale(35)">
-      <stop stop-color="#3c8cff" stop-opacity=".22"/>
-      <stop offset="1" stop-color="#3c8cff" stop-opacity="0"/>
-    </radialGradient>
-    <filter id="softGlow" x="-50%" y="-50%" width="200%" height="200%">
-      <feGaussianBlur stdDeviation="1.8" result="blur"/>
-      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    <filter id="shadow" x="-35%" y="-35%" width="170%" height="185%">
+      <feDropShadow dx="0" dy="4" stdDeviation="4" flood-color="#123c2c" flood-opacity=".18"/>
     </filter>
   </defs>
-  <rect x="2" y="2" width="60" height="60" rx="17" fill="url(#shell)" stroke="url(#spectrum)" stroke-width="2"/>
-  <rect x="6" y="6" width="52" height="52" rx="13" fill="url(#aura)" stroke="#dffcff" stroke-opacity=".09"/>
-  <path d="M17.5 14H13a2 2 0 0 0-2 2v32a2 2 0 0 0 2 2h4.5M46.5 14H51a2 2 0 0 1 2 2v32a2 2 0 0 1-2 2h-4.5" fill="none" stroke="url(#spectrum)" stroke-width="2.6" stroke-linecap="round"/>
-  <path d="M23 18v28M23 19h20M23 31.5h16M23 45h20" fill="none" stroke="url(#evidence)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" filter="url(#softGlow)"/>
-  <circle cx="43" cy="19" r="2.4" fill="#ffc45e"/>
-  <circle cx="39" cy="31.5" r="2.4" fill="#6ee7f2"/>
-  <circle cx="43" cy="45" r="2.4" fill="#71e0aa"/>
-  <path d="M16 24h2M16 32h2M16 40h2M46 24h2M46 32h2" stroke="#dffcff" stroke-opacity=".38" stroke-width="1.6" stroke-linecap="round"/>
-  <circle cx="48" cy="48" r="9" fill="#07110e" stroke="url(#spectrum)" stroke-width="2" filter="url(#softGlow)"/>
-  <path d="m43.8 48 2.6 2.7 5.5-5.8" fill="none" stroke="#8ff0b9" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="3" y="3" width="58" height="58" rx="17" fill="url(#tile)" stroke="#dbe7df" stroke-width="2"/>
+  <path d="M18 14h-4.5A2.5 2.5 0 0 0 11 16.5v31a2.5 2.5 0 0 0 2.5 2.5H18M46 14h4.5a2.5 2.5 0 0 1 2.5 2.5v31a2.5 2.5 0 0 1-2.5 2.5H46" fill="none" stroke="url(#trust)" stroke-width="3.25" stroke-linecap="round"/>
+  <path d="M23 14.5h14.5L45 22v25.5a2.5 2.5 0 0 1-2.5 2.5h-19a2.5 2.5 0 0 1-2.5-2.5V17a2.5 2.5 0 0 1 2-2.45Z" fill="url(#paper)" stroke="#177c59" stroke-width="2" filter="url(#shadow)"/>
+  <path d="M37 15v7.5h7.5" fill="#dff0e5" stroke="#177c59" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M26 28h13M26 33h10M26 38h13" fill="none" stroke="#91a79a" stroke-width="2.3" stroke-linecap="round"/>
+  <path d="M26 43h7" fill="none" stroke="#ef7a22" stroke-width="2.8" stroke-linecap="round"/>
+  <circle cx="43.5" cy="43.5" r="8.5" fill="#10895f" stroke="#fff" stroke-width="2"/>
+  <path d="m39.7 43.4 2.4 2.5 5.2-5.4" fill="none" stroke="#fff" stroke-width="2.35" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="18" cy="20" r="2" fill="#ef7a22"/>
+  <circle cx="46" cy="31" r="2" fill="#17a873"/>
 </svg>

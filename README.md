@@ -41,10 +41,10 @@ This is an intentionally honest portfolio MVP. It runs locally and demonstrates 
   PostgreSQL full-text retrieval for durable multi-instance deployments. CI exercises the complete
   account-to-citation path on PostgreSQL 16.
 - Rate limits, upload limits, security headers, safe file storage, prompt-injection flags, and text-free audit events.
-- A dark-first editorial interface with layered evidence surfaces, gold/emerald trust states, a polished light theme, responsive mobile layout, keyboard focus states, and an IZAQ / 4UP design-engineering signature.
+- A daylight-first editorial interface with layered evidence surfaces, green trust states, orange evidence accents, an optional dark theme, responsive mobile layout, keyboard focus states, and an IZAQ / 4UP design-engineering signature.
 - Prompt starters, auto-growing questions, toast feedback, `/` question focus, and `Ctrl/Cmd + K` library search.
 - A replayable cinematic intro with an IZAQ maker reveal, progress counter, skip control, mobile composition, and reduced-motion fallback.
-- Aurora, Cobalt, and Ember accent palettes, interactive pointer light, spectrum navigation, and more expressive verified-evidence states.
+- Grove and Citrus accent palettes, interactive pointer light, clear navigation, and expressive verified-evidence states.
 - An IZAQ portrait signature across the access gate, cinematic intro, header, and product rail.
 - Server-enforced account-mode allowances with atomic Free/Pro document slots, monthly question-attempt accounting, and customer-visible usage meters. The shared-code portfolio pilot remains outside these commercial limits.
 - A clearly labeled freemium product preview with Free, planned Pro, a founding Team pilot, and provider-hosted checkout/support links.

@@ -137,7 +137,8 @@ def test_workspace_exposes_guided_pilot_without_requesting_contact_details(clien
     assert "Swipe left or right to dismiss" in page.text
     assert "registerMeaningfulUse()" in page.text
     assert "body{zoom:1.25}" in page.text
-    assert "||'cobalt'" in page.text
+    assert "||'light'" in page.text
+    assert "||'grove'" in page.text
     assert "$9" in page.text
     assert "$149" in page.text
     assert "documents stored" in page.text
