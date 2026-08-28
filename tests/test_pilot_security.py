@@ -24,7 +24,14 @@ def test_protected_pilot_gate_and_seeded_content(tmp_path):
         assert "max-age=31536000" in health.headers["strict-transport-security"]
 
         robots = client.get("/robots.txt")
-        assert robots.text == "User-agent: *\nAllow: /about\nDisallow: /\n"
+        assert robots.text == (
+            "User-agent: *\n"
+            "Allow: /about\n"
+            "Allow: /terms\n"
+            "Allow: /privacy\n"
+            "Allow: /refunds\n"
+            "Disallow: /\n"
+        )
 
         public_site = client.get("/about")
         assert public_site.status_code == 200
@@ -40,8 +47,43 @@ def test_protected_pilot_gate_and_seeded_content(tmp_path):
         assert "$9" in public_site.text
         assert "$149" in public_site.text
         assert "Validation pricing only" in public_site.text
+        assert 'href="/terms"' in public_site.text
+        assert 'href="/privacy"' in public_site.text
+        assert 'href="/refunds"' in public_site.text
+        assert "evidence.desk.help@gmail.com" in public_site.text
         assert public_site.headers["x-robots-tag"] == "index, follow"
         assert "public" in public_site.headers["cache-control"]
+
+        terms = client.get("/terms")
+        assert terms.status_code == 200
+        assert "Ahsan Maqbool Ahmad" in terms.text
+        assert "evidence.desk.help@gmail.com" in terms.text
+        assert "28 August 2026" in terms.text
+        assert "Paid checkout is not active" in terms.text
+        assert terms.headers["x-robots-tag"] == "index, follow"
+
+        privacy = client.get("/privacy")
+        assert privacy.status_code == 200
+        assert "does not receive or store complete payment-card details" in privacy.text
+        assert "temporary data can disappear" in privacy.text
+        assert privacy.headers["x-robots-tag"] == "index, follow"
+
+        refunds = client.get("/refunds")
+        assert refunds.status_code == 200
+        assert "seven calendar days" in refunds.text
+        assert "FastSpring order reference" in refunds.text
+        assert "Direct MCB or NayaPay support transfers" in refunds.text
+        assert refunds.headers["x-robots-tag"] == "index, follow"
+
+        success = client.get("/checkout/success")
+        assert success.status_code == 200
+        assert "browser redirect is not treated as proof of payment" in success.text
+        assert success.headers["x-robots-tag"] == "noindex, nofollow, noarchive"
+
+        cancelled = client.get("/checkout/cancelled")
+        assert cancelled.status_code == 200
+        assert "No EvidenceDesk upgrade was confirmed" in cancelled.text
+        assert cancelled.headers["x-robots-tag"] == "noindex, nofollow, noarchive"
 
         locked_page = client.get("/", follow_redirects=False)
         assert locked_page.status_code == 307

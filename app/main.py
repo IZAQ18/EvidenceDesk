@@ -53,6 +53,7 @@ from app.ingestion import (
 )
 from app.ingestion_worker import run_ingestion_worker, stop_ingestion_worker
 from app.isolated_extraction import extract_in_isolated_process
+from app.legal import checkout_result_page, privacy_page, refunds_page, terms_page
 from app.malware import MalwareScanner, build_malware_scanner, malware_capability
 from app.model_gateway import ModelGateway, ModelTransport
 from app.models import (
@@ -311,6 +312,11 @@ def create_app(
             "/v1/auth/password-reset/complete",
             "/v1/auth/invitations/accept",
             "/about",
+            "/terms",
+            "/privacy",
+            "/refunds",
+            "/checkout/success",
+            "/checkout/cancelled",
             "/v1/payments/webhook",
         }
         if (
@@ -327,7 +333,8 @@ def create_app(
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
-        is_public_site = request.url.path == "/about"
+        public_index_paths = {"/about", "/terms", "/privacy", "/refunds"}
+        is_public_site = request.url.path in public_index_paths
         response.headers["X-Robots-Tag"] = (
             "index, follow" if is_public_site else "noindex, nofollow, noarchive"
         )
@@ -391,7 +398,14 @@ def create_app(
 
     @app.get("/robots.txt", response_class=PlainTextResponse, include_in_schema=False)
     def robots() -> PlainTextResponse:
-        return PlainTextResponse("User-agent: *\nAllow: /about\nDisallow: /\n")
+        return PlainTextResponse(
+            "User-agent: *\n"
+            "Allow: /about\n"
+            "Allow: /terms\n"
+            "Allow: /privacy\n"
+            "Allow: /refunds\n"
+            "Disallow: /\n"
+        )
 
     @app.get("/social-card.png", include_in_schema=False)
     def social_card() -> FileResponse:
@@ -430,6 +444,26 @@ def create_app(
                 access_url="/signin" if resolved_settings.accounts_enabled else "/access",
             )
         )
+
+    @app.get("/terms", response_class=HTMLResponse, include_in_schema=False)
+    def terms() -> HTMLResponse:
+        return HTMLResponse(terms_page())
+
+    @app.get("/privacy", response_class=HTMLResponse, include_in_schema=False)
+    def privacy() -> HTMLResponse:
+        return HTMLResponse(privacy_page())
+
+    @app.get("/refunds", response_class=HTMLResponse, include_in_schema=False)
+    def refunds() -> HTMLResponse:
+        return HTMLResponse(refunds_page())
+
+    @app.get("/checkout/success", response_class=HTMLResponse, include_in_schema=False)
+    def checkout_success() -> HTMLResponse:
+        return HTMLResponse(checkout_result_page(cancelled=False))
+
+    @app.get("/checkout/cancelled", response_class=HTMLResponse, include_in_schema=False)
+    def checkout_cancelled() -> HTMLResponse:
+        return HTMLResponse(checkout_result_page(cancelled=True))
 
     @app.get("/access", response_class=HTMLResponse, response_model=None, include_in_schema=False)
     def pilot_access(request: Request) -> HTMLResponse | RedirectResponse:
