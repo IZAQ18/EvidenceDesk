@@ -70,6 +70,36 @@ def test_database_pool_size_is_bounded():
         )
 
 
+def test_production_accounts_require_managed_storage_or_explicit_test_mode(tmp_path):
+    unsafe = Settings(
+        _env_file=None,
+        env="production",
+        accounts_enabled=True,
+        db_path=tmp_path / "temporary.db",
+        document_store_path=tmp_path / "originals",
+    )
+    with pytest.raises(RuntimeError, match="requires PostgreSQL and S3"):
+        unsafe.validate_account_storage()
+
+    acceptance = unsafe.model_copy(update={"ephemeral_account_testing_enabled": True})
+    acceptance.validate_account_storage()
+    assert acceptance.account_storage_is_durable() is False
+
+    managed = Settings(
+        _env_file=None,
+        env="production",
+        accounts_enabled=True,
+        database_backend="postgres",
+        database_url=(
+            "postgresql://user:password@database.example/evidencedesk?sslmode=require"
+        ),
+        document_store_backend="s3",
+        s3_bucket="evidencedesk-private",
+    )
+    managed.validate_account_storage()
+    assert managed.account_storage_is_durable() is True
+
+
 def test_postgres_components_build_encoded_tls_url():
     settings = Settings(
         _env_file=None,

@@ -13,6 +13,7 @@ def _account_settings(tmp_path) -> Settings:
         db_path=tmp_path / "accounts.db",
         document_store_path=tmp_path / "originals",
         accounts_enabled=True,
+        ephemeral_account_testing_enabled=True,
         account_registration_enabled=True,
         account_session_hours=24,
         rate_limit_per_minute=10_000,
@@ -66,6 +67,13 @@ def test_account_registration_session_csrf_and_private_workspace(tmp_path):
         assert workspace.status_code == 200
         assert "const ACCOUNT_MODE=true" in workspace.text
         assert "__ACCOUNT_MODE__" not in workspace.text
+
+        capabilities = client.get("/v1/capabilities").json()
+        assert capabilities["durability"] == {
+            "profile": "ephemeral",
+            "customer_data_ready": False,
+            "synthetic_acceptance_only": True,
+        }
 
         me = client.get("/v1/auth/me")
         assert me.status_code == 200

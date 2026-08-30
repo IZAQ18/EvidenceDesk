@@ -53,6 +53,7 @@ def _settings(tmp_path, *, registration: bool = True) -> Settings:
         db_path=tmp_path / "google.db",
         document_store_path=tmp_path / "originals",
         accounts_enabled=True,
+        ephemeral_account_testing_enabled=True,
         account_registration_enabled=registration,
         google_oauth_enabled=True,
         google_oauth_registration_enabled=registration,

@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     env: Literal["development", "test", "production"] = "development"
     auth_mode: Literal["api_key", "oidc", "hybrid"] = "api_key"
     accounts_enabled: bool = False
+    ephemeral_account_testing_enabled: bool = False
     account_registration_enabled: bool = False
     account_session_hours: int = Field(default=24 * 7, ge=1, le=24 * 30)
     account_email_verification_required: bool = False
@@ -379,6 +380,23 @@ class Settings(BaseSettings):
             ]
             if missing:
                 raise RuntimeError(f"OIDC configuration is incomplete: {', '.join(missing)}")
+
+    def account_storage_is_durable(self) -> bool:
+        """Return whether account records and originals use managed storage boundaries."""
+        return self.database_backend == "postgres" and self.document_store_backend == "s3"
+
+    def validate_account_storage(self) -> None:
+        """Fail closed before production accounts accidentally use restart-prone storage."""
+        if self.env != "production" or not self.accounts_enabled:
+            return
+        if self.account_storage_is_durable():
+            return
+        if not self.ephemeral_account_testing_enabled:
+            raise RuntimeError(
+                "Production account mode requires PostgreSQL and S3 document storage. "
+                "For a synthetic-data acceptance test only, explicitly set "
+                "EVIDENCEDESK_EPHEMERAL_ACCOUNT_TESTING_ENABLED=true"
+            )
 
     def validate_storage(self) -> None:
         if self.document_store_backend != "s3":

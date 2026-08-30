@@ -220,6 +220,7 @@ def create_app(
         worker_task: asyncio.Task[None] | None = None
         try:
             resolved_settings.validate_auth()
+            resolved_settings.validate_account_storage()
             resolved_settings.validate_storage()
             resolved_settings.validate_model_gateway()
             resolved_settings.validate_ingestion_security()
@@ -1366,6 +1367,18 @@ def create_app(
                 "daily_cost_limit_cents": resolved_settings.model_daily_cost_limit_cents,
             },
             "auth_mode": resolved_settings.auth_mode,
+            "durability": {
+                "profile": (
+                    "managed"
+                    if resolved_settings.account_storage_is_durable()
+                    else "ephemeral"
+                ),
+                "customer_data_ready": resolved_settings.account_storage_is_durable(),
+                "synthetic_acceptance_only": bool(
+                    resolved_settings.accounts_enabled
+                    and not resolved_settings.account_storage_is_durable()
+                ),
+            },
             "plan": {
                 "key": policy.key,
                 "name": policy.name,

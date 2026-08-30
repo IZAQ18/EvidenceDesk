@@ -48,6 +48,7 @@ that ambiguous combination at startup. When ready for an account-mode acceptance
 ```dotenv
 EVIDENCEDESK_PUBLIC_BASE_URL=https://evidencedesk-e2zk.onrender.com
 EVIDENCEDESK_ACCOUNTS_ENABLED=true
+EVIDENCEDESK_EPHEMERAL_ACCOUNT_TESTING_ENABLED=true
 EVIDENCEDESK_ACCOUNT_REGISTRATION_ENABLED=false
 EVIDENCEDESK_GOOGLE_OAUTH_ENABLED=true
 EVIDENCEDESK_GOOGLE_OAUTH_REGISTRATION_ENABLED=true
@@ -58,6 +59,11 @@ EVIDENCEDESK_GOOGLE_OAUTH_CLIENT_SECRET=<paste the Google client secret>
 Remove `EVIDENCEDESK_PILOT_ACCESS_CODE` from the active Render environment before restarting. Keep
 the Google client secret in Render only; never put it in `.env.example`, GitHub, screenshots, chat,
 or browser-visible JavaScript.
+
+The explicit ephemeral-testing switch is required because the free Render pilot uses temporary
+SQLite and local files. It makes that risk visible in the application and must be removed when the
+service moves to PostgreSQL plus private S3-compatible storage. EvidenceDesk otherwise refuses to
+start production account mode on restart-prone storage.
 
 `EVIDENCEDESK_ACCOUNT_REGISTRATION_ENABLED=false` keeps unverified password registration closed.
 If Google self-service registration should also remain closed, set

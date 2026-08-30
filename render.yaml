@@ -21,6 +21,8 @@ services:
         value: "false"
       - key: EVIDENCEDESK_ACCOUNTS_ENABLED
         value: "false"
+      - key: EVIDENCEDESK_EPHEMERAL_ACCOUNT_TESTING_ENABLED
+        value: "false"
       - key: EVIDENCEDESK_ACCOUNT_REGISTRATION_ENABLED
         value: "false"
       - key: EVIDENCEDESK_GOOGLE_OAUTH_ENABLED
