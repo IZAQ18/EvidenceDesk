@@ -1,6 +1,7 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q --disable-warnings --maxfail=1"
+markers = ["browser: real Chromium end-to-end acceptance test"]
 
 [tool.ruff]
 line-length = 100

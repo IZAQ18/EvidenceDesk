@@ -136,7 +136,7 @@ def test_workspace_exposes_guided_pilot_without_requesting_contact_details(clien
     assert 'id="supportNudge"' in page.text
     assert "Swipe left or right to dismiss" in page.text
     assert "registerMeaningfulUse()" in page.text
-    assert "body{zoom:1.25}" in page.text
+    assert "body{zoom:1.25}" not in page.text
     assert "||'light'" in page.text
     assert "||'green'" in page.text
     assert "const palettes=['green','orange']" in page.text

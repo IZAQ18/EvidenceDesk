@@ -52,9 +52,10 @@ The optional account mode now provides:
 - automated tests covering registration, weak passwords, login failure, CSRF, forgery,
   revocation, duplicate accounts, invite-only mode, and cross-account isolation.
 
-This milestone deliberately does not claim that public registration is ready. Keep
-`EVIDENCEDESK_ACCOUNTS_ENABLED=false` on the existing Render portfolio pilot until the durable-data
-and account-recovery gates are complete.
+This milestone deliberately does not claim that public registration is ready. The current Render
+acceptance build enables private Google accounts only for approved OAuth test users and explicitly
+sets `EVIDENCEDESK_EPHEMERAL_ACCOUNT_TESTING_ENABLED=true`. It remains synthetic-data-only until
+the durable-data, scanning, recovery, and operational gates are complete.
 
 ## Milestone 2 evidence
 
@@ -144,10 +145,10 @@ The opt-in account lifecycle now provides:
 - accessible verification, forgotten-password, and reset screens that keep GET requests
   read-only so automated mail-link scanners cannot consume tokens.
 
-The Render pilot explicitly keeps accounts, registration, verification, reset, invitations,
-export, and deletion disabled. Public registration still requires managed-data acceptance, an
-authenticated sender domain, delivery and abuse monitoring, privacy/retention review, and
-operational acceptance of the implemented controls.
+The Render pilot enables Google-created accounts for approved OAuth test users while keeping
+password registration, verification, reset, invitations, export, and deletion disabled. Public
+registration still requires managed-data acceptance, an authenticated sender domain where email
+features are used, abuse monitoring, privacy/retention review, and operational acceptance.
 
 ## Milestone 7 evidence
 

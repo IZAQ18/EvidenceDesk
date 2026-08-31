@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     auth_mode: Literal["api_key", "oidc", "hybrid"] = "api_key"
     accounts_enabled: bool = False
     ephemeral_account_testing_enabled: bool = False
+    public_customer_launch_enabled: bool = False
+    edge_rate_limiting_confirmed: bool = False
+    monitoring_confirmed: bool = False
     account_registration_enabled: bool = False
     account_session_hours: int = Field(default=24 * 7, ge=1, le=24 * 30)
     account_email_verification_required: bool = False
@@ -396,6 +399,35 @@ class Settings(BaseSettings):
                 "Production account mode requires PostgreSQL and S3 document storage. "
                 "For a synthetic-data acceptance test only, explicitly set "
                 "EVIDENCEDESK_EPHEMERAL_ACCOUNT_TESTING_ENABLED=true"
+            )
+
+    def validate_public_customer_launch(self) -> None:
+        """Require explicit operational evidence before accepting real customer data."""
+        if not self.public_customer_launch_enabled:
+            return
+        missing: list[str] = []
+        if self.env != "production":
+            missing.append("production environment")
+        if not self.accounts_enabled:
+            missing.append("account authentication")
+        if not self.account_storage_is_durable():
+            missing.append("PostgreSQL and private S3 storage")
+        if not self.malware_scan_required or self.malware_scanner_backend != "clamd":
+            missing.append("required private ClamAV scanning")
+        if not self.account_export_enabled or not self.account_deletion_enabled:
+            missing.append("account export and deletion")
+        if not self.edge_rate_limiting_confirmed:
+            missing.append("edge or distributed rate limiting")
+        if not self.monitoring_confirmed:
+            missing.append("production monitoring and alerting")
+        if self.ephemeral_account_testing_enabled:
+            missing.append("ephemeral account testing must be disabled")
+        if not (self.account_registration_enabled or self.google_oauth_registration_enabled):
+            missing.append("an approved account registration path")
+        if missing:
+            raise RuntimeError(
+                "Public customer launch is blocked until these controls are ready: "
+                + ", ".join(missing)
             )
 
     def validate_storage(self) -> None:

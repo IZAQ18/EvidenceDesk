@@ -37,7 +37,7 @@ accounts, real users, or operational acceptance.
 ### Product and business presentation
 
 - Dark/light themes, three accent palettes, responsive workspace, cinematic onboarding, clear
-  empty/error/progress states, evidence inspector, and IZAQ/4UP signature system.
+  empty/error/progress states, evidence inspector, and IZAQ product-studio signature system.
 - Protected pilot access, public `/about` presentation, social artwork, deployment documentation,
   video/LinkedIn launch material, freemium plan preview, support presentation, and consented payment
   recipient details.

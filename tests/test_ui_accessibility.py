@@ -102,3 +102,11 @@ def test_upload_limit_is_explained_before_sending_a_large_file():
     assert "uploadLimitBytes=0" in UI_HTML
     assert "caps.max_upload_bytes" in UI_HTML
     assert "Compress the PDF or split it into smaller parts" in UI_HTML
+
+
+def test_account_ui_refreshes_usage_and_scopes_onboarding_progress():
+    assert "ACCOUNT_MODE?loadUsage():Promise.resolve()" in UI_HTML
+    assert "pilotTaskStorageKey()" in UI_HTML
+    assert "activeAccount?.workspace_id" in UI_HTML
+    assert "body{zoom:1.25}" not in UI_HTML
+    assert "4UP" not in UI_HTML

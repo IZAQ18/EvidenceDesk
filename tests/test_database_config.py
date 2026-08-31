@@ -100,6 +100,65 @@ def test_production_accounts_require_managed_storage_or_explicit_test_mode(tmp_p
     assert managed.account_storage_is_durable() is True
 
 
+def test_public_customer_launch_requires_all_operational_controls():
+    incomplete = Settings(
+        _env_file=None,
+        env="production",
+        public_customer_launch_enabled=True,
+        accounts_enabled=True,
+        google_oauth_enabled=True,
+        google_oauth_registration_enabled=True,
+        google_oauth_client_id="client.apps.googleusercontent.com",
+        google_oauth_client_secret="secret",
+        public_base_url="https://evidencedesk.example",
+        database_backend="postgres",
+        database_url=(
+            "postgresql://user:password@database.example/evidencedesk?sslmode=require"
+        ),
+        document_store_backend="s3",
+        s3_bucket="evidencedesk-private",
+    )
+    with pytest.raises(RuntimeError, match="ClamAV scanning"):
+        incomplete.validate_public_customer_launch()
+
+    ready = incomplete.model_copy(
+        update={
+            "malware_scanner_backend": "clamd",
+            "malware_scan_required": True,
+            "account_export_enabled": True,
+            "account_deletion_enabled": True,
+            "edge_rate_limiting_confirmed": True,
+            "monitoring_confirmed": True,
+        }
+    )
+    ready.validate_public_customer_launch()
+
+
+def test_public_launch_never_allows_ephemeral_account_override():
+    settings = Settings(
+        _env_file=None,
+        env="production",
+        public_customer_launch_enabled=True,
+        accounts_enabled=True,
+        ephemeral_account_testing_enabled=True,
+        account_registration_enabled=True,
+        database_backend="postgres",
+        database_url=(
+            "postgresql://user:password@database.example/evidencedesk?sslmode=require"
+        ),
+        document_store_backend="s3",
+        s3_bucket="evidencedesk-private",
+        malware_scanner_backend="clamd",
+        malware_scan_required=True,
+        account_export_enabled=True,
+        account_deletion_enabled=True,
+        edge_rate_limiting_confirmed=True,
+        monitoring_confirmed=True,
+    )
+    with pytest.raises(RuntimeError, match="ephemeral account testing"):
+        settings.validate_public_customer_launch()
+
+
 def test_postgres_components_build_encoded_tls_url():
     settings = Settings(
         _env_file=None,

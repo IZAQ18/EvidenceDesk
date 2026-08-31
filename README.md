@@ -43,7 +43,7 @@ This is an intentionally honest portfolio MVP. It runs locally and demonstrates 
   PostgreSQL full-text retrieval for durable multi-instance deployments. CI exercises the complete
   account-to-citation path on PostgreSQL 16.
 - Rate limits, upload limits, security headers, safe file storage, prompt-injection flags, and text-free audit events.
-- A daylight-first editorial interface with layered evidence surfaces, green trust states, orange evidence accents, an optional dark theme, responsive mobile layout, keyboard focus states, and an IZAQ / 4UP design-engineering signature.
+- A daylight-first editorial interface with layered evidence surfaces, green trust states, orange evidence accents, an optional dark theme, responsive mobile layout, keyboard focus states, and an IZAQ product-studio signature.
 - Prompt starters, auto-growing questions, toast feedback, `/` question focus, and `Ctrl/Cmd + K` library search.
 - A replayable cinematic intro with an IZAQ maker reveal, progress counter, skip control, mobile composition, and reduced-motion fallback.
 - Clearly distinct Green and Orange palettes, interactive pointer light, clear navigation, and expressive verified-evidence states.
@@ -189,7 +189,8 @@ same response as known accounts. Real sender-domain authentication, delivery mon
 controls, and provider acceptance remain deployment gates; see the
 [Google sign-in runbook](docs/google-signin.md), [account email runbook](docs/account-email.md),
 [account controls](docs/account-controls.md), and
-[launch readiness](docs/launch-readiness.md).
+[launch readiness](docs/launch-readiness.md) and the
+[production launch runbook](docs/production-launch-runbook.md).
 
 ### Configure durable originals
 
@@ -297,7 +298,7 @@ See the [Render pilot guide](docs/render-pilot.md) and [code-protection notes](d
 
 ### Freemium and revenue preview
 
-The **Plans** view shows the intended customer journey without pretending that billing is finished. The current Free pilot is a protected, synthetic-data demonstration. The repository now contains a disabled-by-default Pro subscription foundation for account mode; the deployed Render pilot does not enable it. A founding Team pilot can open an approved hosted checkout, but its one-time payment does not automatically activate an application plan.
+The **Plans** view shows the intended customer journey without pretending that billing is finished. The current Free pilot gives approved Google test users private accounts on temporary, synthetic-data-only storage. The repository contains a disabled-by-default Pro subscription foundation; the deployed Render pilot does not enable billing. A founding Team pilot can open an approved hosted checkout, but its one-time payment does not automatically activate an application plan.
 
 If a payment or creator-support provider approves your account, configure its hosted HTTPS link for product checkout. The public support panel also displays developer-authorized direct-transfer recipient details; payer credentials are never collected by EvidenceDesk:
 

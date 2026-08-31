@@ -221,6 +221,7 @@ def create_app(
         try:
             resolved_settings.validate_auth()
             resolved_settings.validate_account_storage()
+            resolved_settings.validate_public_customer_launch()
             resolved_settings.validate_storage()
             resolved_settings.validate_model_gateway()
             resolved_settings.validate_ingestion_security()
@@ -302,6 +303,13 @@ def create_app(
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
         started = time.perf_counter()
+        supplied_request_id = request.headers.get("X-Request-ID", "")
+        request_id = (
+            supplied_request_id
+            if re.fullmatch(r"[A-Za-z0-9._-]{8,80}", supplied_request_id)
+            else uuid4().hex
+        )
+        request.state.request_id = request_id
         public_paths = {
             "/health",
             "/ready",
@@ -345,6 +353,7 @@ def create_app(
         else:
             response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Request-ID"] = request_id
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
         public_index_paths = {"/about", "/terms", "/privacy", "/refunds"}
@@ -375,7 +384,8 @@ def create_app(
         if resolved_settings.env == "production":
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         logger.info(
-            "request method=%s path=%s status=%s duration_ms=%.1f",
+            "request request_id=%s method=%s path=%s status=%s duration_ms=%.1f",
+            request_id,
             request.method,
             request.url.path,
             response.status_code,
@@ -485,7 +495,13 @@ def create_app(
             return RedirectResponse("/", status_code=307)
         return HTMLResponse(access_page())
 
-    @app.post("/access", response_class=HTMLResponse, response_model=None, include_in_schema=False)
+    @app.post(
+        "/access",
+        response_class=HTMLResponse,
+        response_model=None,
+        include_in_schema=False,
+        dependencies=[Depends(enforce_rate_limit)],
+    )
     def unlock_pilot(access_code: str = Form(...)) -> HTMLResponse | RedirectResponse:
         expected = resolved_settings.pilot_access_code
         if not expected or not hmac.compare_digest(access_code, expected):
@@ -1377,6 +1393,9 @@ def create_app(
                 "synthetic_acceptance_only": bool(
                     resolved_settings.accounts_enabled
                     and not resolved_settings.account_storage_is_durable()
+                ),
+                "public_customer_launch_enabled": (
+                    resolved_settings.public_customer_launch_enabled
                 ),
             },
             "plan": {

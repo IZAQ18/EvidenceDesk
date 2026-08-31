@@ -73,6 +73,7 @@ def test_account_registration_session_csrf_and_private_workspace(tmp_path):
             "profile": "ephemeral",
             "customer_data_ready": False,
             "synthetic_acceptance_only": True,
+            "public_customer_launch_enabled": False,
         }
 
         me = client.get("/v1/auth/me")

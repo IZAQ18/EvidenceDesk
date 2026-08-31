@@ -8,6 +8,7 @@ def test_health_and_security_headers(client):
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
     assert response.headers["x-content-type-options"] == "nosniff"
+    assert len(response.headers["x-request-id"]) == 32
     assert response.headers["x-frame-options"] == "DENY"
     readiness = client.get("/ready")
     assert readiness.status_code == 200

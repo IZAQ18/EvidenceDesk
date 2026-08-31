@@ -19,7 +19,7 @@ A sensible first customer journey is:
 | Tier | Validation price | Purpose | Status |
 | --- | --- | --- | --- |
 | Free pilot | **$0** | Let reviewers understand the product with synthetic examples. | Available as a protected demonstration; no durable service promise. |
-| Pro | **$9/month** | Private individual library, OCR and citation-first questions, exports, and account controls. | Pricing hypothesis; guarded subscription entitlements and allowances exist in code but remain disabled on the shared pilot pending provider and durable-deployment acceptance. |
+| Pro | **$9/month** | Private individual library, OCR and citation-first questions, exports, and account controls. | Pricing hypothesis; guarded subscription entitlements and allowances exist in code but remain disabled on the acceptance pilot pending provider and durable-deployment acceptance. |
 | Founding team pilot | **$149 one time** | A 14-day guided evaluation for up to five reviewers, approved non-sensitive documents, and a written readiness report. | Planned validation offer; qualify the team and document scope before accepting payment. |
 
 The first measurable allowance hypothesis is now enforced for account workspaces: Free includes 5
@@ -49,7 +49,10 @@ Billing portal, cancellation, and audit events
 
 EvidenceDesk now includes a disabled-by-default Lemon Squeezy Pro foundation. An authenticated workspace administrator receives a hosted checkout URL carrying a server-generated workspace binding. A signed webhook can update only that workspace, only for an approved variant, only outside provider test mode, and only when the provider event is newer than stored state. Minimal payment notifications and entitlement state are stored; card and bank details are not.
 
-This code is not a claim that billing is live. The protected Render pilot still uses shared pilot access and ephemeral storage, so it cannot enable subscription entitlements. The one-time Team pilot remains a manually qualified service offer rather than an automatically granted plan.
+This code is not a claim that billing is live. The protected Render acceptance build uses approved
+Google test accounts with ephemeral storage, so it cannot enable subscription entitlements. The
+one-time Team pilot remains a manually qualified service offer rather than an automatically granted
+plan.
 
 ## Provider decision for a Pakistan-based developer
 
