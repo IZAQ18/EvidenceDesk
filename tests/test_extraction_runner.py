@@ -25,6 +25,9 @@ def _run(tmp_path, monkeypatch, *, content: bytes, request: object, max_chars: i
             str(max_chars),
         ],
     )
+    # The real runner executes in a dedicated child process. Applying its Linux
+    # resource limits inside pytest would constrain the entire test worker.
+    monkeypatch.setattr(extraction_runner, "_limits", lambda *_: None)
     code = extraction_runner.main()
     return code, json.loads(response_path.read_text(encoding="utf-8"))
 
