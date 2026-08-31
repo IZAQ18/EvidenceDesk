@@ -14,6 +14,7 @@ RUN addgroup --system app && adduser --system --ingroup app app
 WORKDIR /app
 
 RUN apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
 

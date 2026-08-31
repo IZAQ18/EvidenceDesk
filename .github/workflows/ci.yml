@@ -10,6 +10,22 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - run: pip install --require-hashes -r requirements-dev.lock
+      - run: ruff check app tests
+      - run: pip-audit -r requirements.lock
+      - run: pytest -vv --ignore=tests/test_postgres_integration.py --cov=app --cov-report=term-missing --cov-fail-under=80
+
+  postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     services:
       postgres:
         image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
@@ -34,12 +50,11 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-dev.lock
       - run: pip install --require-hashes -r requirements-dev.lock
-      - run: ruff check app tests
-      - run: pip-audit -r requirements.lock
-      - run: pytest --cov=app --cov-report=term-missing --cov-fail-under=80
+      - run: pytest -vv -s tests/test_postgres_integration.py
 
   browser:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     env:
       EVIDENCEDESK_RUN_BROWSER_TESTS: "1"
     steps:
@@ -68,6 +83,7 @@ jobs:
 
   codeql:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
       security-events: write
@@ -77,9 +93,19 @@ jobs:
         with:
           languages: python
       - uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
+        with:
+          upload: never
+          output: codeql-results
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: codeql-results
+          path: codeql-results
+          if-no-files-found: error
+          retention-days: 30
 
   container:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
       security-events: write
@@ -113,8 +139,17 @@ jobs:
           output: trivy-results.sarif
           severity: HIGH,CRITICAL
           ignore-unfixed: true
-          exit-code: "1"
-      - uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
-        if: always() && hashFiles('trivy-results.sarif') != ''
+          exit-code: "0"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          sarif_file: trivy-results.sarif
+          name: trivy-results
+          path: trivy-results.sarif
+          if-no-files-found: error
+          retention-days: 30
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: evidencedesk:ci
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
