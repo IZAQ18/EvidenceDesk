@@ -19,6 +19,23 @@ ACCOUNT_COOKIE = "evidencedesk_session"
 _SCRYPT_N = 2**14
 _SCRYPT_R = 8
 _SCRYPT_P = 1
+_SIGNIN_FUNNEL_SCRIPT = """<script>
+(() => {
+  const requested = new URLSearchParams(location.search).get('utm_source');
+  const known = new Set(['linkedin', 'whatsapp', 'github']);
+  const source = requested && known.has(requested.toLowerCase())
+    ? requested.toLowerCase() : requested ? 'other' : 'direct';
+  try {
+    if (sessionStorage.getItem('evidencedesk-funnel-signin_view')) return;
+    sessionStorage.setItem('evidencedesk-funnel-signin_view', '1');
+  } catch (_) {}
+  fetch('/v1/public/events', {
+    method: 'POST', credentials: 'omit', keepalive: true,
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({event: 'signin_view', source})
+  }).catch(() => {});
+})();
+</script>"""
 
 
 class AccountExistsError(ValueError):
@@ -1292,7 +1309,7 @@ def account_page(
 const modes=[...document.querySelectorAll('[data-mode]')],nameBlock=document.querySelector('#nameBlock'),form=document.querySelector('#form'),status=document.querySelector('#status'),submit=document.querySelector('#submit');let mode='login';
 modes.forEach(button=>button.onclick=()=>{{mode=button.dataset.mode;modes.forEach(item=>item.classList.toggle('active',item===button));let register=mode==='register';nameBlock.classList.toggle('hidden',!register);document.querySelector('#name').required=register;document.querySelector('#password').autocomplete=register?'new-password':'current-password';document.querySelector('#title').textContent=register?'Create your private workspace':'Welcome back';document.querySelector('#subtitle').textContent=register?{registration_prompt}:'Sign in to continue to your evidence workspace.';submit.textContent=register?'Create workspace →':'Enter EvidenceDesk →'}});
 form.onsubmit=async event=>{{event.preventDefault();status.textContent=mode==='register'?'Creating your secure workspace…':'Verifying your account…';status.className='status';submit.disabled=true;let body={{email:document.querySelector('#email').value,password:document.querySelector('#password').value}};if(mode==='register')body.display_name=document.querySelector('#name').value;try{{let response=await fetch('/v1/auth/'+mode,{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(body)}}),data=await response.json().catch(()=>({{detail:'Unexpected response'}}));if(!response.ok)throw new Error(typeof data.detail==='string'?data.detail:'Please check the form and try again.');if(data.action_required==='verify_email'){{status.textContent=data.message;submit.disabled=false;return}}location.replace({next_path_json})}}catch(error){{status.textContent=error.message;status.className='status error';submit.disabled=false}}}};
-</script></body></html>"""
+</script>{_SIGNIN_FUNNEL_SCRIPT}</body></html>"""
 
 
 def invitation_page(token: str) -> str:

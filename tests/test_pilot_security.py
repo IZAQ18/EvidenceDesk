@@ -51,6 +51,9 @@ def test_protected_pilot_gate_and_seeded_content(tmp_path):
         assert 'href="/privacy"' in public_site.text
         assert 'href="/refunds"' in public_site.text
         assert "evidence.desk.help@gmail.com" in public_site.text
+        assert 'data-funnel="primary_cta_click"' in public_site.text
+        assert "/v1/public/events" in public_site.text
+        assert "utm_source" in public_site.text
         assert public_site.headers["x-robots-tag"] == "index, follow"
         assert "public" in public_site.headers["cache-control"]
 

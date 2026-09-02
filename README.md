@@ -51,7 +51,7 @@ This is an intentionally honest portfolio MVP. It runs locally and demonstrates 
 - Server-enforced account-mode allowances with atomic Free/Pro document slots, monthly question-attempt accounting, and customer-visible usage meters. The shared-code portfolio pilot remains outside these commercial limits.
 - A clearly labeled freemium product preview with Free, planned Pro, a founding Team pilot, and provider-hosted checkout/support links.
 - A disabled-by-default FastSpring or Lemon Squeezy Pro foundation: account-bound hosted checkout, provider-correct HMAC webhook verification, approved-product and live-mode checks, ordered/idempotent entitlement updates, masked customer hints, and admin-only payment notifications. Live billing is not configured or claimed.
-- A public `/about` product page plus dedicated `/terms`, `/privacy`, and `/refunds` pages for visitors and payment-provider review, while the document workspace remains behind the private pilot gate.
+- A public `/` product page (also available at `/about`) plus dedicated `/terms`, `/privacy`, and `/refunds` pages, while the document workspace remains private after authentication.
 - A larger IZAQ support presentation with consented MCB and NayaPay recipient IBANs plus a clearly labeled 40% developer charity pledge.
 - Docker, GitHub Actions CI, evaluation/security tests, and a concrete path to standard AWS.
 
@@ -316,7 +316,7 @@ EVIDENCEDESK_PAYMENT_ENTITLEMENTS_ENABLED=true
 
 The webhook endpoint is `/v1/payments/webhook`. It verifies the provider signature before storing a minimal event and never receives card or MCB account details. When the guarded Pro integration is explicitly enabled, only a live approved subscription carrying a valid server-generated workspace binding can update that workspace's plan. Stale, test-mode, unknown-variant, malformed, and unbound events cannot grant access. Free account workspaces are limited to 5 document slots and 100 question attempts per calendar month; Pro workspaces receive 100 and 2,000. The checks are atomic and server-side, while the account panel displays the same usage state. This is still not complete billing: provider acceptance, a customer portal, durable deployment, operational refund acceptance, and live checkout acceptance remain gates. Public provisional terms, privacy, and a seven-calendar-day refund policy are available for provider review. See the [billing runbook](docs/billing-entitlements.md) and [monetization plan](docs/monetization.md).
 
-The public marketing and provider-review URL is `/about`. It describes the product, plans, honest limitations, privacy boundary, and payment/refund status without exposing the protected workspace. Use the full deployed `https://...onrender.com/about` address in LinkedIn and payment-provider onboarding.
+The signed-out root URL and `/about` both show the public product experience. They describe the product, plans, honest limitations, privacy boundary, and payment/refund status without exposing the workspace. Campaign links can use a coarse source such as `?utm_source=linkedin`; EvidenceDesk stores only daily aggregate funnel counts and never stores an IP address, email, question, document name, or per-user analytics identifier in that funnel table.
 
 ## A simple demo
 

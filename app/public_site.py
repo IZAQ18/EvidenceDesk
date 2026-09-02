@@ -2,27 +2,91 @@ from __future__ import annotations
 
 from html import escape
 
+_PUBLIC_FUNNEL_SCRIPT = """<script>
+(() => {
+  const known = new Set(['linkedin', 'whatsapp', 'github']);
+  const requested = new URLSearchParams(location.search).get('utm_source');
+  let source = requested ? requested.toLowerCase() : '';
+  if (!source) {
+    try {
+      const host = new URL(document.referrer).hostname.toLowerCase();
+      source = host.includes('linkedin') ? 'linkedin'
+        : host.includes('whatsapp') ? 'whatsapp'
+        : host.includes('github') ? 'github' : 'direct';
+    } catch (_) { source = 'direct'; }
+  } else if (!known.has(source)) {
+    source = 'other';
+  }
+  const send = event => fetch('/v1/public/events', {
+    method: 'POST', credentials: 'omit', keepalive: true,
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({event, source})
+  }).catch(() => {});
+  const once = event => {
+    const key = `evidencedesk-funnel-${event}`;
+    try {
+      if (sessionStorage.getItem(key)) return;
+      sessionStorage.setItem(key, '1');
+    } catch (_) {}
+    send(event);
+  };
+  once('landing_view');
+  document.querySelectorAll('[data-funnel]').forEach(element => {
+    if (source !== 'direct' && element.getAttribute('href')?.startsWith('/')) {
+      const destination = new URL(element.href);
+      destination.searchParams.set('utm_source', source);
+      element.href = destination.toString();
+    }
+    element.addEventListener('click', () => send(element.dataset.funnel));
+  });
+  if ('IntersectionObserver' in window) {
+    const observer = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        if (!entry.isIntersecting) return;
+        once(entry.target.dataset.funnelSection);
+        observer.unobserve(entry.target);
+      });
+    }, {threshold: 0.35});
+    document.querySelectorAll('[data-funnel-section]').forEach(section => observer.observe(section));
+  }
+})();
+</script>"""
+
 
 def public_page(
-    *, checkout_url: str | None, support_url: str | None, access_url: str = "/access"
+    *,
+    checkout_url: str | None,
+    support_url: str | None,
+    access_url: str = "/access",
+    base_url: str = "",
 ) -> str:
     checkout = escape(checkout_url or "", quote=True)
     support = escape(support_url or "", quote=True)
     access = escape(access_url, quote=True)
+    canonical = escape(f"{base_url.rstrip('/')}/" if base_url else "/", quote=True)
+    social_card = escape(
+        f"{base_url.rstrip('/')}/social-card.png" if base_url else "/social-card.png",
+        quote=True,
+    )
     checkout_cta = (
         f'<a class="button gold" href="{checkout}" target="_blank" rel="noopener noreferrer">Open hosted checkout ↗</a>'
         if checkout
         else '<span class="button disabled">Hosted checkout opening soon</span>'
     )
     support_cta = (
-        f'<a class="button gold" href="{support}" target="_blank" rel="noopener noreferrer">Support IZAQ ↗</a>'
+        f'<a class="button gold" data-funnel="support_cta_click" href="{support}" target="_blank" rel="noopener noreferrer">Support IZAQ ↗</a>'
         if support
         else '<span class="button disabled">Hosted support link coming later</span>'
     )
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="EvidenceDesk is a citation-first assistant for organizational documents, built by IZAQ.">
-<meta name="robots" content="index,follow"><title>EvidenceDesk · Evidence before confidence</title>
+<meta name="description" content="Upload organizational documents, ask questions, and verify every supported answer with inspectable source citations and OCR-backed evidence.">
+<meta name="robots" content="index,follow"><link rel="canonical" href="{canonical}">
+<meta property="og:type" content="website"><meta property="og:title" content="EvidenceDesk · Evidence before confidence">
+<meta property="og:description" content="A citation-first AI knowledge assistant for organizational documents."><meta property="og:image" content="{social_card}">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="EvidenceDesk · Evidence before confidence">
+<meta name="twitter:description" content="Ask your documents questions and inspect the evidence behind every supported answer."><meta name="twitter:image" content="{social_card}">
+<title>EvidenceDesk · Citation-first AI document assistant</title>
 <link rel="icon" href="/logo.svg" type="image/svg+xml">
 <style>
 :root{{--bg:#07090d;--panel:#10141a;--ink:#edf3f8;--muted:#9ba8b7;--mint:#65dfc1;--gold:#58ddff;--line:#29323d}}
@@ -40,10 +104,10 @@ header{{background:#ffffffed;box-shadow:0 8px 30px #1c4a300d}}nav a{{color:#5f70
 .account{{border-color:#e4c5ad;background:#fffaf6}}.account-note,.fine,.limit-note{{color:#718078!important}}.quota span{{border-color:#11845a2d;background:#11845a08}}.button.disabled{{color:#8a978f;background:#eef2ee}}
 </style><style>.brand-lockup{{display:flex;align-items:center;gap:12px;margin-right:auto}}.brand-lockup .brand{{margin-right:0}}.product-logo{{width:46px;height:46px;display:block;border-radius:13px;box-shadow:0 10px 28px #1e5d3c1c}}</style></head><body>
 <header><nav class="wrap"><div class="brand-lockup"><img class="product-logo" src="/logo.svg" alt="EvidenceDesk logo"><div class="brand"><small>CITATION-FIRST KNOWLEDGE</small>EvidenceDesk</div></div><a href="#how">How it works</a><a href="#plans">Plans</a><a href="#support">Support</a><img class="portrait" src="/developer-signature.png" alt="IZAQ developer portrait"></nav></header>
-<main><div class="wrap hero"><div><div class="kicker">Secure knowledge system · portfolio pilot</div><h1>Evidence <span>before confidence.</span></h1><p class="deck">EvidenceDesk answers questions from organizational documents and lets the reader inspect the exact source behind each supported claim.</p><div class="actions"><a class="button gold" href="{access}">Enter the private demo →</a><a class="button" href="#how">See the workflow</a></div></div><aside class="maker"><img src="/developer-signature.png" alt="IZAQ developer portrait"><b>IZAQ</b><small>Product direction · Design × Engineering</small><p>A focused portfolio product exploring grounded AI, OCR, document security, and inspectable answers.</p></aside></div>
-<section id="how"><div class="wrap"><div class="kicker">The useful difference</div><h2>Ask. Answer. Verify.</h2><p class="intro">Instead of treating a model's memory as policy, EvidenceDesk retrieves approved document passages first, writes from that evidence, and attaches citations that open beside the answer.</p><div class="grid"><article class="card"><span class="number">01 · INGEST</span><h3>Read the documents</h3><p>Upload text, searchable PDFs, or scanned PDFs. OCR converts weak page images into searchable text.</p></article><article class="card"><span class="number">02 · GROUND</span><h3>Use authorized evidence</h3><p>Tenant and classification rules filter content before retrieval and answer generation.</p></article><article class="card"><span class="number">03 · INSPECT</span><h3>Open the citation</h3><p>Each supported answer links back to the document page and highlighted passage.</p></article></div></div></section>
-<section id="plans"><div class="wrap"><div class="kicker">Commercial path</div><h2>Simple limits. No confusing credits.</h2><div class="grid"><article class="card"><span class="number">INDIVIDUAL ACCOUNT · ACCEPTANCE PILOT</span><h3>Free</h3><span class="price">$0 <small>/ month</small></span><div class="quota"><span><b>5</b>documents stored at one time</span><span><b>100</b>cited questions every month</span></div><p>OCR, exact-page citations, and server-enforced usage controls. No customer API key required.</p><a class="button" href="{access}">Try protected demo</a></article><article class="card"><span class="number">PRO · PRICING HYPOTHESIS</span><h3>EvidenceDesk Pro</h3><span class="price">$9 <small>/ month</small></span><div class="quota"><span><b>100</b>documents stored at one time</span><span><b>2,000</b>cited questions every month</span></div><p>Higher private-workspace capacity, OCR, reports, exports, and account controls. Checkout is not active yet.</p><span class="button disabled">Join later</span></article><article class="card"><span class="number">FOUNDING OFFER · ONE TIME</span><h3>Team pilot</h3><span class="price">$149 <small>/ 14-day evaluation</small></span><p>Up to five reviewers, approved non-sensitive documents, guided evaluation, and a written readiness report.</p>{checkout_cta}</article></div><p class="limit-note">“Documents” means how many files can be stored in a workspace at once—not how many can be uploaded each month. Question usage resets each calendar month.</p><p class="pricing-note">Validation pricing only. Private Google accounts are enabled for approved acceptance testers, with server-enforced limits. This remains a synthetic-data environment until durable storage, provider approval, checkout validation, and production operations are accepted.</p></div></section>
+<main><div class="wrap hero"><div><div class="kicker">Secure knowledge system · portfolio pilot</div><h1>Evidence <span>before confidence.</span></h1><p class="deck">EvidenceDesk answers questions from organizational documents and lets the reader inspect the exact source behind each supported claim.</p><div class="actions"><a class="button gold" data-funnel="primary_cta_click" href="{access}">Try EvidenceDesk free →</a><a class="button" href="#how">See the workflow</a></div><p class="fine">No credit card · no customer API key · use synthetic or non-sensitive documents during the pilot.</p></div><aside class="maker"><img src="/developer-signature.png" alt="IZAQ developer portrait"><b>IZAQ</b><small>Product direction · Design × Engineering</small><p>A focused portfolio product exploring grounded AI, OCR, document security, and inspectable answers.</p></aside></div>
+<section id="how" data-funnel-section="workflow_view"><div class="wrap"><div class="kicker">The useful difference</div><h2>Ask. Answer. Verify.</h2><p class="intro">Instead of treating a model's memory as policy, EvidenceDesk retrieves approved document passages first, writes from that evidence, and attaches citations that open beside the answer.</p><div class="grid"><article class="card"><span class="number">01 · INGEST</span><h3>Read the documents</h3><p>Upload text, searchable PDFs, or scanned PDFs. OCR converts weak page images into searchable text.</p></article><article class="card"><span class="number">02 · GROUND</span><h3>Use authorized evidence</h3><p>Tenant and classification rules filter content before retrieval and answer generation.</p></article><article class="card"><span class="number">03 · INSPECT</span><h3>Open the citation</h3><p>Each supported answer links back to the document page and highlighted passage.</p></article></div></div></section>
+<section id="plans" data-funnel-section="plans_view"><div class="wrap"><div class="kicker">Commercial path</div><h2>Simple limits. No confusing credits.</h2><div class="grid"><article class="card"><span class="number">INDIVIDUAL ACCOUNT · ACCEPTANCE PILOT</span><h3>Free</h3><span class="price">$0 <small>/ month</small></span><div class="quota"><span><b>5</b>documents stored at one time</span><span><b>100</b>cited questions every month</span></div><p>OCR, exact-page citations, and server-enforced usage controls. No customer API key required.</p><a class="button" data-funnel="primary_cta_click" href="{access}">Start free pilot</a></article><article class="card"><span class="number">PRO · PRICING HYPOTHESIS</span><h3>EvidenceDesk Pro</h3><span class="price">$9 <small>/ month</small></span><div class="quota"><span><b>100</b>documents stored at one time</span><span><b>2,000</b>cited questions every month</span></div><p>Higher private-workspace capacity, OCR, reports, exports, and account controls. Checkout is not active yet.</p><span class="button disabled">Join later</span></article><article class="card"><span class="number">FOUNDING OFFER · ONE TIME</span><h3>Team pilot</h3><span class="price">$149 <small>/ 14-day evaluation</small></span><p>Up to five reviewers, approved non-sensitive documents, guided evaluation, and a written readiness report.</p>{checkout_cta}</article></div><p class="limit-note">“Documents” means how many files can be stored in a workspace at once—not how many can be uploaded each month. Question usage resets each calendar month.</p><p class="pricing-note">Validation pricing only. Private Google accounts are enabled for approved acceptance testers, with server-enforced limits. This remains a synthetic-data environment until durable storage, provider approval, checkout validation, and production operations are accepted.</p></div></section>
 <section id="support"><div class="wrap"><article class="card support"><img src="/developer-signature.png" alt="IZAQ developer portrait"><div><div class="kicker">Back thoughtful independent engineering</div><h2>Support IZAQ</h2><p>Help continue the careful design, testing, and documentation behind EvidenceDesk.</p><div class="pledge"><strong>40%</strong><span>Developer pledge: for every PKR 100 received through the dedicated support route, PKR 40 is reserved for charitable giving.</span></div></div><div class="support-accounts"><section class="account"><div class="account-bank">MCB</div><dl><dt>Account title</dt><dd>Ahsan Maqbool Ahmad</dd><dt>IBAN</dt><dd><code>PK58 MUCB 1160 9811 3100 4752</code></dd></dl><small class="account-note">The complete MCB IBAN supplied by the account holder passed the standard IBAN checksum. Confirm the recipient details in your banking app before sending.</small></section><section class="account"><div class="account-bank">NayaPay</div><dl><dt>Account title</dt><dd>Muhammad Qasim Ayub</dd><dt>IBAN</dt><dd><code>PK83 NAYA 1234 5030 6196 1996</code></dd></dl><small class="account-note">Displayed with the account holder's consent. Confirm the recipient details before sending.</small></section></div><div class="support-foot"><p class="fine">EvidenceDesk is not presented as a registered charity. The 40% pledge is a developer commitment; transfer records should be retained for transparent reporting.</p>{support_cta}</div></article></div></section>
 <section><div class="wrap"><div class="kicker">Honest scope</div><h2>Portfolio-ready, not overclaimed.</h2><p class="intro">This is a practical MVP and protected synthetic-data pilot. It is not GovCloud-authorized, compliance-certified, enterprise-scale production history, or a replacement for human HR, legal, financial, or safety review.</p></div></section>
 <section id="legal"><div class="wrap legal"><article><h3>Terms</h3><p class="fine">Understand permitted use, account responsibilities, subscriptions, and the limits of citation-assisted answers.</p><a href="/terms">Read Terms of Service →</a></article><article><h3>Privacy</h3><p class="fine">See what the pilot processes, why it is processed, and why only synthetic or non-sensitive data is permitted today.</p><a href="/privacy">Read Privacy Notice →</a></article><article><h3>Payments &amp; refunds</h3><p class="fine">Eligible future hosted purchases have a seven-calendar-day refund request window. Direct support transfers do not unlock a plan.</p><a href="/refunds">Read Refund Policy →</a></article></div></section></main>
-<footer><div class="wrap">EvidenceDesk · v1.0 private product build · Operated by Ahsan Maqbool Ahmad · <a href="mailto:evidence.desk.help@gmail.com">evidence.desk.help@gmail.com</a> · <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="/refunds">Refunds</a></div></footer></body></html>"""
+<footer><div class="wrap">EvidenceDesk · v1.0 private product build · Operated by Ahsan Maqbool Ahmad · <a href="mailto:evidence.desk.help@gmail.com">evidence.desk.help@gmail.com</a> · <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="/refunds">Refunds</a></div></footer>{_PUBLIC_FUNNEL_SCRIPT}</body></html>"""

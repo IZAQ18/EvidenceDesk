@@ -84,6 +84,7 @@ from app.models import (
     MessageOut,
     PilotReviewRequest,
     Principal,
+    PublicFunnelEvent,
     WorkspaceInvitationAcceptRequest,
     WorkspaceInvitationOut,
     WorkspaceInvitationRequest,
@@ -282,6 +283,14 @@ def create_app(
 
     app.dependency_overrides[get_settings] = current_settings
 
+    def record_funnel(event_type: str, source: str = "direct") -> None:
+        try:
+            repository.record_funnel_event(event_type, source)
+        except Exception as exc:
+            logger.warning(
+                "funnel_event_failed event=%s type=%s", event_type, type(exc).__name__
+            )
+
     def principal_plan_policy(principal: Principal) -> PlanPolicy:
         return policy_for(repository.workspace_plan(principal.tenant_id))
 
@@ -333,6 +342,7 @@ def create_app(
             "/v1/auth/password-reset/request",
             "/v1/auth/password-reset/complete",
             "/v1/auth/invitations/accept",
+            "/v1/public/events",
             "/about",
             "/terms",
             "/privacy",
@@ -357,7 +367,9 @@ def create_app(
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
         public_index_paths = {"/about", "/terms", "/privacy", "/refunds"}
-        is_public_site = request.url.path in public_index_paths
+        is_public_site = request.url.path in public_index_paths or bool(
+            getattr(request.state, "public_page", False)
+        )
         response.headers["X-Robots-Tag"] = (
             "index, follow" if is_public_site else "noindex, nofollow, noarchive"
         )
@@ -422,6 +434,16 @@ def create_app(
 
     @app.get("/robots.txt", response_class=PlainTextResponse, include_in_schema=False)
     def robots() -> PlainTextResponse:
+        if resolved_settings.accounts_enabled and not resolved_settings.pilot_access_code:
+            return PlainTextResponse(
+                "User-agent: *\n"
+                "Allow: /\n"
+                "Disallow: /v1/\n"
+                "Disallow: /signin\n"
+                "Disallow: /auth/\n"
+                "Disallow: /access\n"
+                "Disallow: /checkout/\n"
+            )
         return PlainTextResponse(
             "User-agent: *\n"
             "Allow: /about\n"
@@ -466,8 +488,19 @@ def create_app(
                 checkout_url=resolved_settings.checkout_url,
                 support_url=resolved_settings.support_url,
                 access_url="/signin" if resolved_settings.accounts_enabled else "/access",
+                base_url=resolved_settings.public_base_url,
             )
         )
+
+    @app.post(
+        "/v1/public/events",
+        status_code=204,
+        include_in_schema=False,
+        dependencies=[Depends(enforce_rate_limit)],
+    )
+    def public_funnel_event(payload: PublicFunnelEvent) -> Response:
+        record_funnel(payload.event, payload.source)
+        return Response(status_code=204)
 
     @app.get("/terms", response_class=HTMLResponse, include_in_schema=False)
     def terms() -> HTMLResponse:
@@ -573,6 +606,7 @@ def create_app(
             authorization_url, attempt_cookie = google_oauth.begin(next)
         except GoogleOAuthError:
             return RedirectResponse("/signin?auth_error=google_failed", status_code=303)
+        record_funnel("google_signin_started", "google")
         response = RedirectResponse(authorization_url, status_code=303)
         response.set_cookie(
             GOOGLE_OAUTH_COOKIE,
@@ -649,6 +683,7 @@ def create_app(
             session.user_id,
             {"provider": "google", "outcome": outcome},
         )
+        record_funnel("account_authenticated", "google")
         return response
 
     @app.get(
@@ -789,6 +824,7 @@ def create_app(
             session.user_id,
             {"workspace_created": True},
         )
+        record_funnel("account_authenticated", "registration")
         return session.public()
 
     @app.post(
@@ -834,6 +870,7 @@ def create_app(
             "user",
             session.user_id,
         )
+        record_funnel("account_authenticated", "email")
         return session.public()
 
     @app.post(
@@ -898,6 +935,7 @@ def create_app(
             raise HTTPException(status_code=401, detail="Email or password is incorrect")
         set_account_cookie(response, session.token)
         repository.audit(session.principal, "account_login", "user", session.user_id)
+        record_funnel("account_authenticated", "password")
         return session.public()
 
     @app.get("/v1/auth/me", response_model=AccountOut)
@@ -943,6 +981,7 @@ def create_app(
             session.user_id,
             {"role": session.role},
         )
+        record_funnel("account_authenticated", "invitation")
         return session.public()
 
     @app.post(
@@ -1505,6 +1544,7 @@ def create_app(
             job_id,
             {"filename": filename, "size_bytes": len(content)},
         )
+        record_funnel("upload_queued", "workspace")
         return IngestionJobOut(**job)
 
     @app.get(
@@ -1662,6 +1702,7 @@ def create_app(
             document_id,
             {"pages": extracted.page_count, "method": extracted.extraction_method},
         )
+        record_funnel("upload_completed", "workspace")
         documents = repository.list_documents(principal)
         return DocumentOut(**next(item for item in documents if item["id"] == document_id))
 
@@ -1843,6 +1884,7 @@ def create_app(
             message_id,
             {"grounded": result.grounded, "quality": result.evidence_quality},
         )
+        record_funnel("answer_completed", "workspace")
         return result
 
     @app.get("/v1/conversations", response_model=list[ConversationOut])
@@ -1881,6 +1923,7 @@ def create_app(
             payload.message_id,
             {"category": payload.category},
         )
+        record_funnel("feedback_submitted", "workspace")
         return {"status": "recorded"}
 
     @app.post("/v1/pilot-reviews", status_code=201)
@@ -1911,6 +1954,7 @@ def create_app(
                 "would_return": payload.would_return,
             },
         )
+        record_funnel("pilot_review_submitted", "workspace")
         return {"status": "recorded", "review_id": review_id}
 
     @app.get("/v1/messages/{message_id}/report", response_class=PlainTextResponse)
@@ -1960,11 +2004,21 @@ def create_app(
         return repository.admin_metrics(principal)
 
     @app.get("/", response_class=HTMLResponse, response_model=None, include_in_schema=False)
-    def index(request: Request) -> HTMLResponse | RedirectResponse:
+    def index(request: Request) -> HTMLResponse:
         if resolved_settings.accounts_enabled and not resolve_account_session(
             request, resolved_settings
         ):
-            return RedirectResponse("/signin", status_code=307)
+            request.state.public_page = True
+            return HTMLResponse(
+                public_page(
+                    checkout_url=resolved_settings.checkout_url,
+                    support_url=resolved_settings.support_url,
+                    access_url="/signin",
+                    base_url=(resolved_settings.public_base_url or str(request.base_url)).rstrip(
+                        "/"
+                    ),
+                )
+            )
         base_url = (resolved_settings.public_base_url or str(request.base_url)).rstrip("/")
         html = UI_HTML.replace("__SOCIAL_CARD_URL__", f"{base_url}/social-card.png")
         html = html.replace(

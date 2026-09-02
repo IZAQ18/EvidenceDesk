@@ -210,6 +210,20 @@ class Repository:
                 ),
             )
 
+    def record_funnel_event(self, event_type: str, source: str = "direct") -> None:
+        """Increment a daily aggregate without retaining a person or request identifier."""
+        now = datetime.now(UTC)
+        with self.database.connect() as connection:
+            connection.execute(
+                """INSERT INTO funnel_daily
+                   (event_date, event_type, source, event_count, updated_at)
+                   VALUES (?, ?, ?, 1, ?)
+                   ON CONFLICT(event_date, event_type, source) DO UPDATE SET
+                       event_count = funnel_daily.event_count + 1,
+                       updated_at = excluded.updated_at""",
+                (now.date().isoformat(), event_type, source, now.isoformat()),
+            )
+
     def create_ingestion_job(
         self,
         *,
@@ -1263,6 +1277,19 @@ class Repository:
                    ORDER BY created_at LIMIT 1""",
                 (principal.tenant_id,),
             ).fetchone()
+            funnel_start = (datetime.now(UTC).date() - timedelta(days=29)).isoformat()
+            funnel_rows = connection.execute(
+                """SELECT event_date, event_type, source, event_count
+                   FROM funnel_daily WHERE event_date >= ?
+                   ORDER BY event_date, event_type, source""",
+                (funnel_start,),
+            ).fetchall()
+        funnel_totals: Counter[str] = Counter()
+        funnel_by_source: dict[str, Counter[str]] = {}
+        for row in funnel_rows:
+            count = int(row["event_count"])
+            funnel_totals[row["event_type"]] += count
+            funnel_by_source.setdefault(row["source"], Counter())[row["event_type"]] += count
         return {
             "documents": dict(documents),
             "answers": dict(answers),
@@ -1299,6 +1326,15 @@ class Repository:
             "payments": {
                 "totals": [dict(row) for row in payment_totals],
                 "recent": [dict(row) for row in payment_rows],
+            },
+            "funnel": {
+                "period_days": 30,
+                "totals": dict(funnel_totals),
+                "by_source": {
+                    source: dict(counts) for source, counts in funnel_by_source.items()
+                },
+                "daily": [dict(row) for row in funnel_rows],
+                "privacy": "Daily aggregate counts only; no IP, email, question, or document data.",
             },
         }
 

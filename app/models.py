@@ -353,6 +353,18 @@ class FeedbackRequest(BaseModel):
     comment: str | None = Field(default=None, max_length=500)
 
 
+class PublicFunnelEvent(BaseModel):
+    event: Literal[
+        "landing_view",
+        "workflow_view",
+        "plans_view",
+        "primary_cta_click",
+        "support_cta_click",
+        "signin_view",
+    ]
+    source: Literal["direct", "linkedin", "whatsapp", "github", "other"] = "direct"
+
+
 class PilotReviewRequest(BaseModel):
     reviewer_context: Literal[
         "general", "people_ops", "operations", "legal_compliance", "technology", "other"

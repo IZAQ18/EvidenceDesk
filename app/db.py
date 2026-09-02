@@ -331,6 +331,17 @@ CREATE TABLE IF NOT EXISTS model_usage_events (
 );
 CREATE INDEX IF NOT EXISTS idx_model_usage_events_tenant
     ON model_usage_events(tenant_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS funnel_daily (
+    event_date TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    source TEXT NOT NULL,
+    event_count INTEGER NOT NULL DEFAULT 0 CHECK (event_count >= 0),
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(event_date, event_type, source)
+);
+CREATE INDEX IF NOT EXISTS idx_funnel_daily_event
+    ON funnel_daily(event_type, event_date DESC);
 """
 
 POSTGRES_MIGRATIONS: tuple[tuple[int, tuple[str, ...]], ...] = (
@@ -675,6 +686,21 @@ POSTGRES_MIGRATIONS: tuple[tuple[int, tuple[str, ...]], ...] = (
             )""",
             """CREATE INDEX IF NOT EXISTS idx_account_identities_user
                ON account_identities(user_id)""",
+        ),
+    ),
+    (
+        11,
+        (
+            """CREATE TABLE IF NOT EXISTS funnel_daily (
+                event_date TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                source TEXT NOT NULL,
+                event_count BIGINT NOT NULL DEFAULT 0 CHECK (event_count >= 0),
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(event_date, event_type, source)
+            )""",
+            """CREATE INDEX IF NOT EXISTS idx_funnel_daily_event
+               ON funnel_daily(event_type, event_date DESC)""",
         ),
     ),
 )

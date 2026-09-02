@@ -35,10 +35,28 @@ def test_account_registration_session_csrf_and_private_workspace(tmp_path):
     app = create_app(_account_settings(tmp_path))
     with TestClient(app, base_url="https://testserver") as client:
         landing = client.get("/", follow_redirects=False)
-        assert landing.status_code == 307
-        assert landing.headers["location"] == "/signin"
+        assert landing.status_code == 200
+        assert "Try EvidenceDesk free" in landing.text
+        assert 'href="/signin"' in landing.text
+        assert landing.headers["x-robots-tag"] == "index, follow"
+        assert "public" in landing.headers["cache-control"]
+        robots = client.get("/robots.txt").text
+        assert "Allow: /\n" in robots
+        assert "Disallow: /v1/" in robots
+        assert "Disallow: /signin" in robots
         assert "Create account" in client.get("/signin").text
         assert 'href="/signin"' in client.get("/about").text
+
+        event = client.post(
+            "/v1/public/events",
+            json={"event": "landing_view", "source": "linkedin"},
+        )
+        assert event.status_code == 204
+        invalid_event = client.post(
+            "/v1/public/events",
+            json={"event": "email_captured", "source": "linkedin"},
+        )
+        assert invalid_event.status_code == 422
 
         anonymous_api = client.get("/v1/documents")
         assert anonymous_api.status_code == 401
@@ -58,6 +76,11 @@ def test_account_registration_session_csrf_and_private_workspace(tmp_path):
         assert owner["plan"] == "free"
         assert owner["workspace_id"]
         assert owner["csrf_token"]
+        funnel = client.get("/v1/admin/metrics").json()["funnel"]
+        assert funnel["totals"]["landing_view"] == 1
+        assert funnel["totals"]["account_authenticated"] == 1
+        assert funnel["by_source"]["linkedin"]["landing_view"] == 1
+        assert "no IP" in funnel["privacy"]
         cookie = registered.headers["set-cookie"]
         assert "HttpOnly" in cookie
         assert "Secure" in cookie

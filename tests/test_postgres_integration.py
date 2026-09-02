@@ -101,7 +101,7 @@ def test_postgres_accounts_ingestion_retrieval_and_tenant_isolation(tmp_path):
         database = app.state.repository.database
         with database.connect() as connection:
             connection.execute(
-                """TRUNCATE model_usage_events, model_usage_daily,
+                """TRUNCATE funnel_daily, model_usage_events, model_usage_daily,
                           workspace_invitations, account_tokens, auth_sessions,
                           workspace_usage_monthly, workspace_entitlements,
                           workspace_members, workspaces, users,
@@ -113,7 +113,7 @@ def test_postgres_accounts_ingestion_retrieval_and_tenant_isolation(tmp_path):
             versions = connection.execute(
                 "SELECT version FROM schema_migrations ORDER BY version"
             ).fetchall()
-        assert [row["version"] for row in versions] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        assert [row["version"] for row in versions] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 
         first = _register(client, "FIRST@example.com", "First Team")
         uploaded = client.post(
@@ -205,7 +205,7 @@ def test_sqlite_and_local_originals_migrate_to_postgres_and_s3(tmp_path, monkeyp
     target.initialize()
     with target.connect() as connection:
         connection.execute(
-            """TRUNCATE model_usage_events, model_usage_daily,
+            """TRUNCATE funnel_daily, model_usage_events, model_usage_daily,
                       workspace_invitations, account_tokens, auth_sessions,
                       workspace_usage_monthly, workspace_entitlements,
                       workspace_members, workspaces, users,
@@ -297,7 +297,7 @@ def test_postgres_email_verification_and_password_recovery(tmp_path):
         database = app.state.repository.database
         with database.connect() as connection:
             connection.execute(
-                """TRUNCATE model_usage_events, model_usage_daily,
+                """TRUNCATE funnel_daily, model_usage_events, model_usage_daily,
                           workspace_invitations, account_tokens, auth_sessions,
                           workspace_usage_monthly, workspace_entitlements,
                           workspace_members, workspaces, users,
@@ -362,7 +362,7 @@ def test_postgres_workspace_invitation_and_membership_switch(tmp_path):
         database = app.state.repository.database
         with database.connect() as connection:
             connection.execute(
-                """TRUNCATE model_usage_events, model_usage_daily,
+                """TRUNCATE funnel_daily, model_usage_events, model_usage_daily,
                           workspace_invitations, account_tokens, auth_sessions,
                           workspace_usage_monthly, workspace_entitlements,
                           workspace_members, workspaces, users,
