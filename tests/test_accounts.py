@@ -94,6 +94,8 @@ def test_account_registration_session_csrf_and_private_workspace(tmp_path):
         capabilities = client.get("/v1/capabilities").json()
         assert capabilities["durability"] == {
             "profile": "ephemeral",
+            "database_managed": False,
+            "originals_managed": False,
             "customer_data_ready": False,
             "synthetic_acceptance_only": True,
             "public_customer_launch_enabled": False,

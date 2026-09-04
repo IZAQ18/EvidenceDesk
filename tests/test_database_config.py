@@ -61,6 +61,41 @@ def test_postgres_configuration_fails_closed_without_url_or_tls(tmp_path):
     assert isinstance(database, PostgresDatabase)
 
 
+def test_render_private_postgres_requires_explicit_verified_boundary(tmp_path):
+    private_url = "postgresql://user:password@dpg-example123-a/evidencedesk"
+    unverified = Settings(
+        _env_file=None,
+        env="production",
+        database_backend="postgres",
+        database_url=private_url,
+        db_path=tmp_path / "unused.db",
+    )
+    with pytest.raises(RuntimeError, match="private-network hostname"):
+        build_database(unverified)
+
+    verified = unverified.model_copy(update={"database_private_network_verified": True})
+    database = build_database(verified)
+    assert isinstance(database, PostgresDatabase)
+    assert database.url == private_url
+
+
+@pytest.mark.parametrize(
+    "hostname",
+    ["database.example", "dpg-example123-a.example", "localhost", "127.0.0.1"],
+)
+def test_private_network_override_never_allows_public_or_local_hosts(hostname, tmp_path):
+    settings = Settings(
+        _env_file=None,
+        env="production",
+        database_backend="postgres",
+        database_url=f"postgresql://user:password@{hostname}/evidencedesk",
+        database_private_network_verified=True,
+        db_path=tmp_path / "unused.db",
+    )
+    with pytest.raises(RuntimeError, match="must require TLS"):
+        build_database(settings)
+
+
 def test_database_pool_size_is_bounded():
     with pytest.raises(ValueError, match="pool max size"):
         Settings(

@@ -1428,6 +1428,8 @@ def create_app(
                     if resolved_settings.account_storage_is_durable()
                     else "ephemeral"
                 ),
+                "database_managed": resolved_settings.database_backend == "postgres",
+                "originals_managed": resolved_settings.document_store_backend == "s3",
                 "customer_data_ready": resolved_settings.account_storage_is_durable(),
                 "synthetic_acceptance_only": bool(
                     resolved_settings.accounts_enabled

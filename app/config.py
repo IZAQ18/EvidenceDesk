@@ -71,6 +71,7 @@ class Settings(BaseSettings):
     database_user: str | None = None
     database_password: SecretStr | None = None
     database_sslmode: Literal["require", "verify-ca", "verify-full"] = "require"
+    database_private_network_verified: bool = False
     database_pool_min_size: int = Field(default=1, ge=1, le=20)
     database_pool_max_size: int = Field(default=5, ge=1, le=100)
     database_pool_timeout_seconds: float = Field(default=10.0, ge=1.0, le=60.0)
@@ -471,10 +472,24 @@ class Settings(BaseSettings):
             if any(character in self.database_host for character in "/?#@ "):
                 raise RuntimeError("PostgreSQL host contains invalid characters")
         if self.env == "production":
-            query = parse_qs(urlsplit(self.resolved_database_url()).query)
+            parts = urlsplit(self.resolved_database_url())
+            if parts.scheme not in {"postgres", "postgresql"} or not parts.hostname:
+                raise RuntimeError("PostgreSQL connection URL is invalid")
+            query = parse_qs(parts.query)
             secure_modes = {"require", "verify-ca", "verify-full"}
-            if not set(value.lower() for value in query.get("sslmode", [])) & secure_modes:
-                raise RuntimeError("Production PostgreSQL connections must require TLS")
+            tls_required = bool(
+                set(value.lower() for value in query.get("sslmode", [])) & secure_modes
+            )
+            render_private_host = bool(
+                re.fullmatch(r"dpg-[a-z0-9-]+", parts.hostname)
+            )
+            if not tls_required and not (
+                self.database_private_network_verified and render_private_host
+            ):
+                raise RuntimeError(
+                    "Production PostgreSQL connections must require TLS, unless an explicitly "
+                    "verified Render private-network hostname is configured"
+                )
 
     def resolved_database_url(self) -> str:
         if self.database_url is not None:

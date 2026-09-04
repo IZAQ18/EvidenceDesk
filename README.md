@@ -223,7 +223,9 @@ EVIDENCEDESK_DATABASE_URL=postgresql://user:password@host:5432/evidencedesk?sslm
 ```
 
 The URL is handled as a secret and is never returned by an API. Production configuration fails
-closed unless PostgreSQL TLS is required. Startup takes a transaction-scoped PostgreSQL advisory
+closed unless PostgreSQL TLS is required. The only narrow exception is an explicitly confirmed,
+dotless Render private-network `dpg-*` host; public and local hosts cannot use that override.
+Startup takes a transaction-scoped PostgreSQL advisory
 lock, creates the migration ledger, and applies each unapplied schema version exactly once. The
 PostgreSQL search path uses a GIN index and native full-text ranking while preserving the same
 tenant, classification, lifecycle, and citation boundaries as SQLite.
@@ -292,13 +294,28 @@ Docker starts in production mode and fails closed unless authentication is confi
 
 ### Protected free pilot
 
-The recommended portfolio pilot uses Render's free Docker web service with a private GitHub repository. A separate access-code page creates an HttpOnly session, production API documentation is hidden, search engines are told not to index the site, and two fictional Northstar Labs documents are restored after an ephemeral restart. This is privacy-in-depth, not a claim that browser-delivered interface code is invisible.
+The recommended portfolio pilot uses Render's free Docker web service, a free managed PostgreSQL
+database, and a private GitHub repository. Google sign-in creates an HttpOnly session, production
+API documentation is hidden, and search engines are told not to index the site. Accounts, extracted
+evidence, conversations, feedback, and aggregate usage metrics survive web-service restarts in
+PostgreSQL. Original uploaded files still use restart-prone local storage, so the pilot remains for
+synthetic demonstrations only. This is privacy-in-depth, not a claim that browser-delivered
+interface code is invisible.
 
-See the [Render pilot guide](docs/render-pilot.md) and [code-protection notes](docs/code-protection.md). The free instance sleeps after 15 minutes and its local storage can reset, so use it only for synthetic reviewer demonstrations—not sensitive documents or an official production launch. The [Koyeb guide](docs/koyeb-pilot.md) is retained as a paid-plan alternative.
+See the [Render pilot guide](docs/render-pilot.md) and [code-protection notes](docs/code-protection.md).
+The free web instance sleeps when idle and its local original-file storage can reset. The free
+PostgreSQL database also expires after 30 days and has no backups, so use the deployment only for
+synthetic reviewer demonstrations—not sensitive documents or an official production launch. The
+[Koyeb guide](docs/koyeb-pilot.md) is retained as a paid-plan alternative.
 
 ### Freemium and revenue preview
 
-The **Plans** view shows the intended customer journey without pretending that billing is finished. The current Free pilot gives approved Google test users private accounts on temporary, synthetic-data-only storage. The repository contains a disabled-by-default Pro subscription foundation; the deployed Render pilot does not enable billing. A founding Team pilot can open an approved hosted checkout, but its one-time payment does not automatically activate an application plan.
+The **Plans** view shows the intended customer journey without pretending that billing is finished.
+The current Free pilot gives approved Google test users private accounts with database-backed
+metadata and extracted evidence, but original files remain temporary and synthetic-only. The
+repository contains a disabled-by-default Pro subscription foundation; the deployed Render pilot
+does not enable billing. A founding Team pilot can open an approved hosted checkout, but its
+one-time payment does not automatically activate an application plan.
 
 If a payment or creator-support provider approves your account, configure its hosted HTTPS link for product checkout. The public support panel also displays developer-authorized direct-transfer recipient details; payer credentials are never collected by EvidenceDesk:
 

@@ -60,10 +60,10 @@ Remove `EVIDENCEDESK_PILOT_ACCESS_CODE` from the active Render environment befor
 the Google client secret in Render only; never put it in `.env.example`, GitHub, screenshots, chat,
 or browser-visible JavaScript.
 
-The explicit ephemeral-testing switch is required because the free Render pilot uses temporary
-SQLite and local files. It makes that risk visible in the application and must be removed when the
-service moves to PostgreSQL plus private S3-compatible storage. EvidenceDesk otherwise refuses to
-start production account mode on restart-prone storage.
+The explicit ephemeral-testing switch is still required because the free Render pilot uses local
+storage for original files. PostgreSQL preserves account records and extracted evidence, but the
+deployment is not fully durable until it also uses private S3-compatible storage. The switch makes
+that boundary visible and must be removed before a customer launch.
 
 `EVIDENCEDESK_ACCOUNT_REGISTRATION_ENABLED=false` keeps unverified password registration closed.
 If Google self-service registration should also remain closed, set
@@ -83,11 +83,12 @@ EvidenceDesk account whose email matches Google's verified email.
 
 ## Deployment boundary
 
-The current free Render pilot uses ephemeral SQLite and local original-file storage. Accounts and
-uploads can disappear after a restart. Google sign-in can be demonstrated there with synthetic
-documents, but do not call it a durable customer account service. Move to managed PostgreSQL and
-private object storage, complete backup/restore acceptance, and enable operational monitoring
-before a public account launch.
+The current free Render pilot uses managed PostgreSQL and local original-file storage. Accounts,
+extracted evidence, conversations, and aggregate usage reporting survive web-service restarts;
+original uploads can disappear. The free database also expires after 30 days and has no backups.
+Google sign-in can be demonstrated with synthetic documents, but do not call it a durable customer
+account service. Add private object storage, a paid backed-up database, complete backup/restore
+acceptance, and enable operational monitoring before a public account launch.
 
 Primary references: [Google web-server OAuth guide](https://developers.google.com/identity/protocols/oauth2/web-server)
 and [Google OpenID Connect guide](https://developers.google.com/identity/openid-connect/openid-connect).

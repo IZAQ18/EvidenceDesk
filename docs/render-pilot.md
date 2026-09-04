@@ -1,16 +1,24 @@
 # Protected Render pilot
 
-Render is the closest no-cost test host for EvidenceDesk because its free web service can build the existing Dockerfile from a private GitHub repository and provides an `onrender.com` HTTPS address. Render may still require a credit card for account identity verification even when the Free instance type is selected; that verification is separate from choosing a paid service. The repository includes `render.yaml` so the settings remain reviewable without committing the access secret.
+Render is the closest no-cost test host for EvidenceDesk because its free web service can build the
+existing Dockerfile from a private GitHub repository and provides an `onrender.com` HTTPS address.
+The Blueprint also creates a private-network PostgreSQL database on the free plan. Render may still
+require a card for account identity verification; that is separate from choosing paid resources.
+The repository includes `render.yaml` so deployment settings remain reviewable without committing
+Google credentials or the database connection string.
 
 ## Create the service
 
 1. Sign in to Render and choose **New → Blueprint**.
 2. Connect GitHub and grant the Render GitHub app access only to `IZAQ18/EvidenceDesk`.
 3. Select the private repository. Render detects `render.yaml` at the repository root.
-4. When prompted for `EVIDENCEDESK_PILOT_ACCESS_CODE`, enter a unique random code of at least 24 characters.
-5. Confirm that the plan is **Free**, then apply the Blueprint.
+4. Enter the Google Web client ID and client secret when prompted. Keep both values in Render only.
+5. Confirm that both the web service and PostgreSQL database show **Free**, then apply the Blueprint.
 
-The Blueprint builds the Dockerfile, includes Tesseract OCR, waits for GitHub checks before automatic deployment, uses `/health`, and supplies the safe pilot limits. The access code is declared with `sync: false`, so its value is entered in Render and never committed to Git.
+The Blueprint builds the Dockerfile, includes Tesseract OCR, waits for GitHub checks before automatic
+deployment, uses `/health`, and supplies safe pilot limits. It injects the database connection from
+Render without committing it. Google credentials are declared with `sync: false`, so their values
+are entered in Render and never committed to Git.
 
 ## Optional global checkout and payment notifications
 
@@ -22,17 +30,25 @@ EVIDENCEDESK_SUPPORT_URL=https://your-provider.example/your-support-page
 EVIDENCEDESK_PAYMENT_WEBHOOK_SECRET=generated-in-the-provider-dashboard
 ```
 
-Configure the provider callback as `https://YOUR-SERVICE.onrender.com/v1/payments/webhook`. EvidenceDesk verifies the `X-Signature`, stores a minimal idempotent event, masks the customer email, and displays it to admins under **Insights → Payment notifications**. Leave `EVIDENCEDESK_PAYMENT_ENTITLEMENTS_ENABLED=false` on this shared, ephemeral pilot. Automated Pro access requires durable account mode and the separate [billing entitlement runbook](billing-entitlements.md).
+Configure the provider callback as `https://YOUR-SERVICE.onrender.com/v1/payments/webhook`.
+EvidenceDesk verifies the `X-Signature`, stores a minimal idempotent event, masks the customer email,
+and displays it to admins under **Insights → Payment notifications**. Leave
+`EVIDENCEDESK_PAYMENT_ENTITLEMENTS_ENABLED=false` on this synthetic-data pilot. Automated Pro access
+requires fully durable account mode and the separate [billing entitlement runbook](billing-entitlements.md).
 
-Render's free ephemeral SQLite database is not a financial ledger. The payment provider dashboard remains the source of truth, and live commercial launch should move payment-event state to durable PostgreSQL before relying on the in-app panel.
+The pilot stores payment-event metadata in managed PostgreSQL, but Render's free database expires
+after 30 days and provides no backups. It is not a financial ledger. The payment provider dashboard
+remains the source of truth, and a commercial launch needs a paid, backed-up database before relying
+on the in-app panel.
 
 ## Optional Google sign-in acceptance
 
 The repository includes a disabled-by-default **Continue with Google** account flow. It cannot run
 at the same time as the shared pilot access code. Follow the [Google sign-in runbook](google-signin.md)
-to create a Google Web application client and enter its secret only in Render. Because this free
-service stores accounts and documents ephemerally, use it only for a synthetic-data acceptance
-test; durable public accounts still require managed PostgreSQL and private object storage.
+to create a Google Web application client and enter its secret only in Render. This pilot keeps
+accounts and extracted evidence in PostgreSQL, while original files remain on ephemeral local
+storage. Use it only for a synthetic-data acceptance test; durable public accounts still require
+private object storage, backups, monitoring, and the remaining launch controls.
 
 ## Verify the pilot
 
@@ -46,6 +62,10 @@ test; durable public accounts still require managed PostgreSQL and private objec
 
 ## Free-tier boundary
 
-Free Render web services spin down after 15 minutes without traffic, so the first request after inactivity can take about a minute. Render may restart a free service at any time and free services do not support persistent disks. Uploads, conversations, feedback, and audit events can therefore reset. The synthetic documents are intentionally restored when the database is empty.
+Free Render web services spin down after inactivity, so the first request can be slow. Render may
+restart a free service at any time and free services do not support persistent disks. PostgreSQL
+preserves accounts, extracted evidence, conversations, feedback, audit events, and aggregate usage
+metrics across those web-service restarts. Original uploaded files can still disappear, and the
+free PostgreSQL database expires after 30 days without backups.
 
 Do not upload personal, confidential, regulated, or client material. For an official launch, move the container to the documented AWS path, use individual identity-provider accounts, persistent encrypted storage, a managed data/search layer, centralized logs, backups, monitoring, and a formal security review.
