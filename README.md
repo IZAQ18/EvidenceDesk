@@ -6,6 +6,15 @@ EvidenceDesk is a secure, citation-first knowledge assistant for organizational 
 
 This is an intentionally honest portfolio MVP. It runs locally and demonstrates production-minded design, but it is **not** represented as GovCloud-ready, compliance-certified, or proven at large scale.
 
+## Start with an inspectable example
+
+Open `/demo` for a public guided walkthrough of three fictional handbook questions:
+a supported answer, an important policy condition, and insufficient evidence.
+These are explicitly labeled prepared illustrations, not live retrieval or model output.
+The page never reads a private workspace, accepts uploads, creates an account, or calls a provider.
+Use the private workspace for actual document ingestion and question answering.
+See [walkthrough validation](docs/reviewer-walkthrough.md).
+
 ## What v1.0 includes
 
 - Page-aware PDF extraction with bounded OCR fallback for weak pages.

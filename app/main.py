@@ -122,6 +122,7 @@ from app.security import (
 )
 from app.storage import OriginalStorage, build_document_storage
 from app.ui import UI_HTML
+from app.walkthrough import walkthrough_page
 from app.workflow import AnswerWorkflow
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -344,6 +345,7 @@ def create_app(
             "/v1/auth/invitations/accept",
             "/v1/public/events",
             "/about",
+            "/demo",
             "/terms",
             "/privacy",
             "/refunds",
@@ -480,6 +482,12 @@ def create_app(
             Path(__file__).parent / "assets" / "izaq-developer-signature.png",
             media_type="image/png",
         )
+
+    @app.get("/demo", response_class=HTMLResponse, include_in_schema=False)
+    def guided_example() -> HTMLResponse:
+        return HTMLResponse(walkthrough_page(
+            access_url="/signin" if resolved_settings.accounts_enabled else "/access"
+        ))
 
     @app.get("/about", response_class=HTMLResponse, include_in_schema=False)
     def about() -> HTMLResponse:
