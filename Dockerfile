@@ -13,7 +13,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN addgroup --system app && adduser --system --ingroup app app
 WORKDIR /app
 
-RUN apt-get update \
+# Bump when refreshing Debian security fixes; unchanged cached RUN layers would
+# otherwise reuse packages installed before fixes became available.
+ARG OS_PACKAGE_REFRESH=2026-09-13
+RUN test -n "$OS_PACKAGE_REFRESH" \
+    && apt-get update \
     && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
